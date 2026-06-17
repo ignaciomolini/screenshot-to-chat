@@ -4,7 +4,7 @@
 
 ## What It Does
 
-Press `Ctrl+Shift+S` inside OpenCode. The native Windows Snipping Tool opens, you select a region, and the screenshot appears as an image attachment in your chat input — ready to send with your prompt.
+Press `Ctrl+S` inside OpenCode. The native Windows Snipping Tool opens, you select a region, and the screenshot appears as an image attachment in your chat input — ready to send with your prompt.
 
 No external tools. No temp files. No manual uploads.
 
@@ -156,9 +156,6 @@ bunx tsc --noEmit
 | macOS | 🔜 Planned | `screencapture -i` |
 | Linux | 🔜 Planned | `gnome-screenshot` or `scrot` |
 
-## Contributing
-
-This plugin follows the [OpenCode TUI plugin pattern](https://github.com/nicholasgriffintn/opencode). See `ona-logo.tsx` in the OpenCode codebase for reference.
 
 ### Development Workflow
 
