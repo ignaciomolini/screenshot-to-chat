@@ -1,13 +1,13 @@
 Markdown
-# 📄 PRD: OpenCode Native "Screenshot-to-Chat" Plugin
+# 📄 PRD: OpenCode "Screenshot-to-Chat" Plugin
 
 ## 1. Resumen Ejecutivo
-**Objetivo:** Desarrollar una extensión nativa para OpenCode que permita al usuario capturar la pantalla (o una región específica) e inyectar automáticamente la imagen resultante como contexto visual en el input nativo del chat de OpenCode, manteniéndolo 100% agnóstico del agente o modelo subyacente.
+**Objetivo:** Desarrollar una extensión para OpenCode que permita al usuario capturar la pantalla (o una región específica) e inyectar automáticamente la imagen resultante como contexto visual en el input nativo del chat de OpenCode, manteniéndolo 100% agnóstico del agente o modelo subyacente.
 **Problema a resolver:** Fricción actual al compartir contexto visual. El usuario debe salir del editor, usar una herramienta externa de captura, guardar el archivo y subirlo manualmente al chat.
 **Alcance del MVP:** Captura nativa mediante atajo de teclado, conversión a base64/buffer temporal y adjunto automático en la ventana de chat activa de OpenCode.
 
 ## 2. Casos de Uso (User Stories)
-* **Como desarrollador**, quiero presionar un atajo de teclado (`Ctrl+Shift+S` o similar) para que el cursor cambie a modo de selección de área de pantalla.
+* **Como desarrollador**, quiero presionar un atajo de teclado (`Ctrl+S` o similar) para que el cursor cambie a modo de selección de área de pantalla.
 * **Como desarrollador**, quiero que al finalizar la selección, la imagen aparezca instantáneamente en la barra de entrada de texto del panel de IA dentro de OpenCode, lista para enviar junto con mi prompt de texto.
 * **Como usuario de OpenCode**, necesito que el plugin delegue la validación del soporte multimodal al propio cliente de OpenCode o simplemente advierta si el modelo activo actual no soporta visión, para evitar errores de API.
 
@@ -43,6 +43,3 @@ Para asegurar una iteración rápida, las siguientes funciones **no** se incluir
 2. Implementar el módulo `ScreenshotService` responsable de interactuar con el SO subyacente.
 3. Implementar el módulo `ChatInjectionService`. Este servicio debe utilizar estrictamente la API pública de extensiones de OpenCode para insertar adjuntos (attachments) en el panel de chat, sin importar qué framework de agentes esté corriendo por detrás.
 4. Escribir el manejador de eventos que ata el comando del usuario con ambos servicios.
-
-
-

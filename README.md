@@ -16,26 +16,53 @@ No external tools. No temp files. No manual uploads.
 
 ## Installation
 
-Add the plugin to your OpenCode `tui.json` configuration:
+### Quick install (Windows, one command)
 
-```json
-{
-  "plugins": [
-    "/path/to/screenshot-to-chat"
-  ]
-}
+From the repo root, in PowerShell:
+
+```powershell
+.\install.ps1
 ```
 
-Then install dependencies:
+This will:
 
-```bash
-bun install
+1. Copy `screenshot-to-chat.tsx` to `~/.config/opencode/tui-plugins/`
+2. Add the plugin path to the `plugin` array in your `~/.config/opencode/tui.json`
+3. Back up your `tui.json` before mutating it
+
+Restart OpenCode and you're done. The keybind is `Ctrl+S`.
+
+#### Options
+
+```powershell
+.\install.ps1 -Symlink   # Symlink instead of copy — git pull updates the plugin live
+.\install.ps1 -DryRun    # Preview what would happen, no changes
 ```
+
+If you want to do it manually instead, see [Manual install](#manual-install) below.
+
+### Manual install
+
+1. Copy `screenshot-to-chat.tsx` into your OpenCode plugins directory:
+   - Windows: `%USERPROFILE%\.config\opencode\tui-plugins\`
+2. Add the path to the `plugin` array in your `tui.json`:
+
+   ```json
+   {
+     "plugin": [
+       "C:\\Users\\YOU\\.config\\opencode\\tui-plugins\\screenshot-to-chat.tsx"
+     ]
+   }
+   ```
+
+3. Restart OpenCode.
+
+No `bun install` needed at the user side — the plugin file is self-contained.
 
 ## Usage
 
 1. Open a session in OpenCode
-2. Press **`Ctrl+Shift+S`** (or use the Command Palette: `> Capture Screenshot`)
+2. Press **`Ctrl+S`** (or use the Command Palette: `> Capture Screenshot`)
 3. Select a screen region with the Snipping Tool
 4. The screenshot attaches to your prompt as a thumbnail
 5. Type your question and press Enter
@@ -51,7 +78,7 @@ You can also trigger capture from the Command Palette:
 ## How It Works
 
 ```
-Ctrl+Shift+S
+Ctrl+S
     │
     ▼
 ┌─────────────────────┐
