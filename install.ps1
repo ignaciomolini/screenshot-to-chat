@@ -1,12 +1,10 @@
 # install.ps1
 # Installs the screenshot-to-chat plugin into the user's OpenCode config.
 # Usage:
-#   .\install.ps1              # Copy the plugin file
-#   .\install.ps1 -Symlink     # Symlink instead of copy (live dev workflow)
-#   .\install.ps1 -DryRun      # Show what would happen, without doing it
+#   .\install.ps1          # Copy the plugin folder into ~/.config/opencode/tui-plugins/
+#   .\install.ps1 -DryRun  # Show what would happen, without doing it
 
 param(
-    [switch]$Symlink = $false,
     [switch]$DryRun = $false
 )
 
@@ -14,53 +12,68 @@ $ErrorActionPreference = "Stop"
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$SourceFile = Join-Path $ScriptDir "screenshot-to-chat.tsx"
+$SourceEntry = Join-Path $ScriptDir "screenshot-to-chat.tsx"
+$SourceService = Join-Path $ScriptDir "screenshot-service.ts"
+
 $UserConfigDir = Join-Path $env:USERPROFILE ".config\opencode"
 $PluginsDir = Join-Path $UserConfigDir "tui-plugins"
-$TargetFile = Join-Path $PluginsDir "screenshot-to-chat.tsx"
+$PluginDir = Join-Path $PluginsDir "screenshot-to-chat"
+$TargetEntry = Join-Path $PluginDir "screenshot-to-chat.tsx"
+$TargetService = Join-Path $PluginDir "screenshot-service.ts"
 $TuiJsonPath = Join-Path $UserConfigDir "tui.json"
 
 # ── Preflight ────────────────────────────────────────────────────────────────
-if (-not (Test-Path $SourceFile)) {
-    Write-Error "Source file not found: $SourceFile. Run this script from the plugin repo root."
+if (-not (Test-Path $SourceEntry)) {
+    Write-Error "Source file not found: $SourceEntry. Run this script from the plugin repo root."
     exit 1
 }
-
+if (-not (Test-Path $SourceService)) {
+    Write-Error "Source file not found: $SourceService. Run this script from the plugin repo root."
+    exit 1
+}
 if (-not (Test-Path $UserConfigDir)) {
     Write-Error "OpenCode config directory not found: $UserConfigDir. Is OpenCode installed?"
     exit 1
 }
 
-# ── Copy or symlink the plugin file ──────────────────────────────────────────
-if (-not (Test-Path $PluginsDir)) {
+# ── Create plugin folder ─────────────────────────────────────────────────────
+if (-not (Test-Path $PluginDir)) {
     if ($DryRun) {
-        Write-Host "[dry-run] Would create directory: $PluginsDir"
+        Write-Host "[dry-run] Would create directory: $PluginDir"
     } else {
-        New-Item -ItemType Directory -Force -Path $PluginsDir | Out-Null
-        Write-Host "Created directory: $PluginsDir" -ForegroundColor DarkGray
+        New-Item -ItemType Directory -Force -Path $PluginDir | Out-Null
+        Write-Host "Created directory: $PluginDir" -ForegroundColor DarkGray
     }
 }
 
-if ($Symlink) {
-    if (Test-Path $TargetFile) { Remove-Item $TargetFile -Force }
+# ── Copy both source files into the plugin folder ───────────────────────────
+foreach ($pair in @(
+    @{ From = $SourceEntry;   To = $TargetEntry },
+    @{ From = $SourceService; To = $TargetService }
+)) {
     if ($DryRun) {
-        Write-Host "[dry-run] Would symlink: $TargetFile -> $SourceFile"
+        Write-Host "[dry-run] Would copy: $($pair.From) -> $($pair.To)"
     } else {
-        New-Item -ItemType SymbolicLink -Path $TargetFile -Target $SourceFile | Out-Null
-        Write-Host "Symlinked: $TargetFile -> $SourceFile" -ForegroundColor Green
+        Copy-Item -Path $pair.From -Destination $pair.To -Force
+        Write-Host "Copied: $($pair.To)" -ForegroundColor Green
     }
-} else {
+}
+
+# ── Cleanup legacy single-file install (if upgrading from an older installer) ─
+$LegacyFile = Join-Path $PluginsDir "screenshot-to-chat.tsx"
+if (Test-Path $LegacyFile) {
     if ($DryRun) {
-        Write-Host "[dry-run] Would copy: $SourceFile -> $TargetFile"
+        Write-Host "[dry-run] Would remove legacy file: $LegacyFile"
     } else {
-        Copy-Item -Path $SourceFile -Destination $TargetFile -Force
-        Write-Host "Copied: $SourceFile -> $TargetFile" -ForegroundColor Green
+        Remove-Item $LegacyFile -Force
+        Write-Host "Removed legacy single-file install: $LegacyFile" -ForegroundColor DarkGray
     }
 }
 
 # ── Patch tui.json ───────────────────────────────────────────────────────────
 if (-not (Test-Path $TuiJsonPath)) {
-    Write-Warning "tui.json not found at $TuiJsonPath. Add the plugin path to your config manually."
+    Write-Warning "tui.json not found at $TuiJsonPath. Add the plugin path to your config manually:"
+    Write-Warning "  $TargetEntry"
     exit 0
 }
 
@@ -81,26 +94,35 @@ try {
     exit 1
 }
 
-# Ensure $tuiConfig.plugin is an array (it can be a single string or $null)
+# Ensure $tuiConfig.plugin is an array
 if ($null -eq $tuiConfig.plugin) {
     $tuiConfig | Add-Member -NotePropertyName "plugin" -NotePropertyValue @() -Force
 } elseif ($tuiConfig.plugin -isnot [System.Array]) {
     $tuiConfig.plugin = @($tuiConfig.plugin)
 }
 
-# Check if already installed
-$alreadyInstalled = $tuiConfig.plugin | Where-Object { $_ -eq $TargetFile }
+# Remove any legacy single-file entry pointing to the old location
+$legacyEntries = $tuiConfig.plugin | Where-Object { $_ -eq $LegacyFile }
+if ($legacyEntries) {
+    $tuiConfig.plugin = @($tuiConfig.plugin | Where-Object { $_ -ne $LegacyFile })
+    if (-not $DryRun) {
+        Write-Host "Removed legacy entry from tui.json: $LegacyFile" -ForegroundColor DarkGray
+    }
+}
+
+# Check if new path already present
+$alreadyInstalled = $tuiConfig.plugin | Where-Object { $_ -eq $TargetEntry }
 
 if ($alreadyInstalled) {
     Write-Host "Plugin already in tui.json plugin array. No change." -ForegroundColor DarkGray
 } else {
-    $tuiConfig.plugin = @($tuiConfig.plugin) + @($TargetFile)
+    $tuiConfig.plugin = @($tuiConfig.plugin) + @($TargetEntry)
 
     if ($DryRun) {
-        Write-Host "[dry-run] Would add '$TargetFile' to tui.json plugin array"
+        Write-Host "[dry-run] Would add '$TargetEntry' to tui.json plugin array"
     } else {
         $tuiConfig | ConvertTo-Json -Depth 10 | Set-Content -Path $TuiJsonPath
-        Write-Host "Added '$TargetFile' to tui.json plugin array" -ForegroundColor Green
+        Write-Host "Added '$TargetEntry' to tui.json plugin array" -ForegroundColor Green
     }
 }
 

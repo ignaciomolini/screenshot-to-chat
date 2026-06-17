@@ -26,16 +26,17 @@ From the repo root, in PowerShell:
 
 This will:
 
-1. Copy `screenshot-to-chat.tsx` to `~/.config/opencode/tui-plugins/`
-2. Add the plugin path to the `plugin` array in your `~/.config/opencode/tui.json`
-3. Back up your `tui.json` before mutating it
+1. Create `~/.config/opencode/tui-plugins/screenshot-to-chat/` (the plugin's own folder)
+2. Copy both `screenshot-to-chat.tsx` and `screenshot-service.ts` into it
+3. Add the entry-point path to the `plugin` array in your `~/.config/opencode/tui.json`
+4. Back up your `tui.json` before mutating it
+5. Clean up any legacy single-file install from older versions
 
 Restart OpenCode and you're done. The keybind is `Ctrl+S`.
 
 #### Options
 
 ```powershell
-.\install.ps1 -Symlink   # Symlink instead of copy — git pull updates the plugin live
 .\install.ps1 -DryRun    # Preview what would happen, no changes
 ```
 
@@ -43,21 +44,24 @@ If you want to do it manually instead, see [Manual install](#manual-install) bel
 
 ### Manual install
 
-1. Copy `screenshot-to-chat.tsx` into your OpenCode plugins directory:
-   - Windows: `%USERPROFILE%\.config\opencode\tui-plugins\`
-2. Add the path to the `plugin` array in your `tui.json`:
+1. Create a folder for the plugin inside your OpenCode plugins directory:
+   - Windows: `%USERPROFILE%\.config\opencode\tui-plugins\screenshot-to-chat\`
+2. Copy both files from this repo into that folder:
+   - `screenshot-to-chat.tsx`
+   - `screenshot-service.ts`
+3. Add the entry-point path to the `plugin` array in your `tui.json`:
 
    ```json
    {
      "plugin": [
-       "C:\\Users\\YOU\\.config\\opencode\\tui-plugins\\screenshot-to-chat.tsx"
+       "C:\\Users\\YOU\\.config\\opencode\\tui-plugins\\screenshot-to-chat\\screenshot-to-chat.tsx"
      ]
    }
    ```
 
-3. Restart OpenCode.
+4. Restart OpenCode.
 
-No `bun install` needed at the user side — the plugin file is self-contained.
+The two files need to live side by side in the same folder — the entry imports helpers from the service. No `bun install` is needed; the plugin uses OpenCode's own copies of `@opencode-ai/plugin` and `@opentui/solid`.
 
 ## Usage
 
