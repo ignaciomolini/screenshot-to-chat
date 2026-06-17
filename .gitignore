@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Logs (incluye el debug.log que se usó durante el debug del plugin)
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime / cache
+.atl/.skill-registry.cache.json
+.DS_Store
+Thumbs.db
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Bun
+.bun/
