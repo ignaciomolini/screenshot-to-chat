@@ -8,7 +8,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Runtime / cache
-.atl/.skill-registry.cache.json
+.atl/
 .DS_Store
 Thumbs.db
 
