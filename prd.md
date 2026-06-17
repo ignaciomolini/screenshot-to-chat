@@ -9,7 +9,7 @@ Markdown
 ## 2. Casos de Uso (User Stories)
 * **Como desarrollador**, quiero presionar un atajo de teclado (`Ctrl+S` o similar) para que el cursor cambie a modo de selección de área de pantalla.
 * **Como desarrollador**, quiero que al finalizar la selección, la imagen aparezca instantáneamente en la barra de entrada de texto del panel de IA dentro de OpenCode, lista para enviar junto con mi prompt de texto.
-* **Como usuario de OpenCode**, necesito que el plugin delegue la validación del soporte multimodal al propio cliente de OpenCode o simplemente advierta si el modelo activo actual no soporta visión, para evitar errores de API.
+* **Como usuario de OpenCode**, entiendo que la validación de soporte de visión la hace el provider/modelo, no el plugin. La API de OpenCode no expone el modelo activo hasta después de la primera completion, así que el plugin adjunta la imagen y deja que el modelo se encargue: si no soporta visión, el error lo reporta el provider en el response.
 
 ## 3. Flujo de Usuario (User Flow)
 1. El usuario presiona la combinación de teclas configurada o ejecuta el comando desde la Command Palette de OpenCode (`> OpenCode: Capture Screenshot`).
