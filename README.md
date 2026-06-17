@@ -65,19 +65,36 @@ The two files need to live side by side in the same folder — the entry imports
 
 ## Usage
 
-1. Open a session in OpenCode
-2. Press **`Ctrl+S`** (or use the Command Palette: `> Capture Screenshot`)
-3. Select a screen region with the Snipping Tool
-4. The screenshot attaches to your prompt as a thumbnail
-5. Type your question and press Enter
+There are three ways to trigger a capture:
 
-### Command Palette
+### 1. Keybind
 
-You can also trigger capture from the Command Palette:
+Press **`Ctrl+S`** from anywhere in OpenCode.
+
+### 2. Slash command
+
+In the chat input, type:
+
+```
+/screenshot
+```
+
+(or the alias `/capture`), then press Enter. Works in any session.
+
+### 3. Command Palette
 
 1. Press `Ctrl+Shift+P` (or your configured keybind)
 2. Type `Capture Screenshot`
 3. Press Enter
+
+### Flow
+
+Regardless of how you trigger it, the rest is the same:
+
+1. The native Windows Snipping Tool opens
+2. Select a screen region
+3. The screenshot attaches to your prompt as a thumbnail
+4. Type your question and press Enter
 
 ## How It Works
 
