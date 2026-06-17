@@ -79,7 +79,7 @@ In the chat input, type:
 /screenshot
 ```
 
-(or the alias `/capture`), then press Enter. Works in any session.
+then press Enter. Works in any session.
 
 ### 3. Command Palette
 
