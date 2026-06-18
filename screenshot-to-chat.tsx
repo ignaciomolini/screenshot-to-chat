@@ -1,4 +1,3 @@
-// @ts-nocheck
 /** @jsxImportSource @opentui/solid */
 import type {
   TuiPlugin,
@@ -29,7 +28,7 @@ const tui: TuiPlugin = async (
   // step is delegated to a pure function in `screenshot-service.ts` so the
   // logic stays unit-testable.
 
-  api.command.register(() => [
+  api.command?.register(() => [
     {
       title: "Capture Screenshot",
       value: COMMAND_VALUE,

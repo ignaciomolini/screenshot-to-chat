@@ -46,11 +46,6 @@ export interface FilePart {
   filename: string;
 }
 
-export interface PromptLike {
-  current: { parts: readonly unknown[]; input: string; mode?: string };
-  set(prompt: { parts: unknown[]; input: string; mode?: string }): void;
-}
-
 // ── PowerShell clipboard script ──────────────────────────────────────────────
 
 const CLIPBOARD_PS_SCRIPT = `
@@ -104,7 +99,8 @@ export function validateSize(base64: string): CaptureResult {
 }
 
 /**
- * Build a FilePart suitable for injection into TuiPromptInfo.parts.
+ * Build a FilePart suitable for `session.prompt({ parts, noReply: true })`.
+ * The `url` is a base64 data URL so the image travels inline — no temp files.
  */
 export function buildFilePart(base64: string): FilePart {
   return {
@@ -113,17 +109,6 @@ export function buildFilePart(base64: string): FilePart {
     url: `data:image/jpeg;base64,${base64}`,
     filename: "screenshot.jpg",
   };
-}
-
-/**
- * Append a FilePart to the prompt, preserving existing parts and text.
- */
-export function injectToPrompt(promptRef: PromptLike, filePart: FilePart): void {
-  const existing = promptRef.current;
-  promptRef.set({
-    ...existing,
-    parts: [...existing.parts, filePart],
-  });
 }
 
 // ── Async functions (Bun.spawn) ──────────────────────────────────────────────

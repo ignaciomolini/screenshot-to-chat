@@ -2,7 +2,6 @@ import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
 import {
   validateSize,
   buildFilePart,
-  injectToPrompt,
   readClipboard,
   pollClipboard,
   MAX_IMAGE_BYTES,
@@ -11,7 +10,7 @@ import {
 // ── validateSize ─────────────────────────────────────────────────────────────
 
 describe("validateSize", () => {
-  it("accepts image under 5 MB", () => {
+  it("accepts image under 3 MB", () => {
     const base64 = "a".repeat(1000);
     const result = validateSize(base64);
     expect(result.ok).toBe(true);
@@ -21,13 +20,13 @@ describe("validateSize", () => {
     }
   });
 
-  it("accepts image at exactly 5 MB", () => {
+  it("accepts image at exactly 3 MB", () => {
     const base64 = "a".repeat(MAX_IMAGE_BYTES);
     const result = validateSize(base64);
     expect(result.ok).toBe(true);
   });
 
-  it("rejects image over 5 MB", () => {
+  it("rejects image over 3 MB", () => {
     const base64 = "a".repeat(MAX_IMAGE_BYTES + 1);
     const result = validateSize(base64);
     expect(result.ok).toBe(false);
@@ -67,81 +66,6 @@ describe("buildFilePart", () => {
     const part = buildFilePart(base64);
     expect(part.url).toEndWith(base64);
     expect(part.url).toStartWith("data:image/jpeg;base64,");
-  });
-});
-
-// ── injectToPrompt ───────────────────────────────────────────────────────────
-
-describe("injectToPrompt", () => {
-  it("appends FilePart to existing parts", () => {
-    const existingText = { type: "text", text: "hello" };
-    const mockPromptRef = {
-      focused: true,
-      current: {
-        input: "hello",
-        parts: [existingText],
-        mode: "normal" as const,
-      },
-      set: mock(() => {}),
-      reset: mock(() => {}),
-      blur: mock(() => {}),
-      focus: mock(() => {}),
-      submit: mock(() => {}),
-    };
-
-    const filePart = buildFilePart("dGVzdA==");
-    injectToPrompt(mockPromptRef, filePart);
-
-    expect(mockPromptRef.set).toHaveBeenCalled();
-    const callArg = (mockPromptRef.set as ReturnType<typeof mock>).mock
-      .calls[0][0];
-    expect(callArg.parts).toHaveLength(2);
-    expect(callArg.parts[0]).toBe(existingText);
-    expect(callArg.parts[1]).toBe(filePart);
-    expect(callArg.input).toBe("hello");
-  });
-
-  it("preserves existing prompt text", () => {
-    const mockPromptRef = {
-      focused: true,
-      current: {
-        input: "explain this code",
-        parts: [],
-        mode: "normal" as const,
-      },
-      set: mock(() => {}),
-      reset: mock(() => {}),
-      blur: mock(() => {}),
-      focus: mock(() => {}),
-      submit: mock(() => {}),
-    };
-
-    const filePart = buildFilePart("dGVzdA==");
-    injectToPrompt(mockPromptRef, filePart);
-
-    const callArg = (mockPromptRef.set as ReturnType<typeof mock>).mock
-      .calls[0][0];
-    expect(callArg.input).toBe("explain this code");
-  });
-
-  it("works with empty parts array", () => {
-    const mockPromptRef = {
-      focused: true,
-      current: { input: "", parts: [], mode: "normal" as const },
-      set: mock(() => {}),
-      reset: mock(() => {}),
-      blur: mock(() => {}),
-      focus: mock(() => {}),
-      submit: mock(() => {}),
-    };
-
-    const filePart = buildFilePart("dGVzdA==");
-    injectToPrompt(mockPromptRef, filePart);
-
-    const callArg = (mockPromptRef.set as ReturnType<typeof mock>).mock
-      .calls[0][0];
-    expect(callArg.parts).toHaveLength(1);
-    expect(callArg.parts[0]).toBe(filePart);
   });
 });
 

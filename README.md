@@ -111,17 +111,20 @@ Ctrl+S
 ┌─────────────────────┐
 │  Clipboard Polling  │  ← PowerShell reads clipboard every 500ms
 │  (up to 30s)        │     via System.Windows.Forms.Clipboard
+│  + Resize + JPEG    │     Resizes to max 1568px, encodes q75
 └─────────┬───────────┘
           │ image found
           ▼
 ┌─────────────────────┐
-│  Size Validation    │  ← Rejects images > 5 MB
+│  Size Validation    │  ← Rejects images > 3 MB
 └─────────┬───────────┘
           │ ok
           ▼
 ┌─────────────────────┐
-│  FilePart Injection │  ← Attaches as { type: "file", mime: "image/png", ... }
-│  via TuiPromptRef   │     Preserves existing prompt text
+│  session.prompt     │  ← Attaches as { type: "file", mime: "image/jpeg", url: "data:..." }
+│  { noReply: true }  │     Image is pre-attached to the session;
+│                     │     no completion is triggered. User types prompt
+│                     │     and the image travels with it on send.
 └─────────────────────┘
 ```
 
@@ -129,8 +132,8 @@ Ctrl+S
 
 ```
 screenshot-to-chat.tsx    ← Plugin entry: command registration, orchestration, toasts
-screenshot-service.ts     ← Pure/async functions: spawn, clipboard, validate, inject
-screenshot-service.test.ts← 15 unit + integration tests
+screenshot-service.ts     ← Pure/async functions: spawn, clipboard, validate, build
+screenshot-service.test.ts← 12 unit + integration tests
 ```
 
 The service layer is extracted from the plugin entry to enable testing without the TUI runtime.
@@ -162,7 +165,7 @@ Adjust via `POLL_INTERVAL_MS` and `POLL_TIMEOUT_MS` constants.
 | Spawn failed | "Failed to launch capture tool: {error}" | OS blocked execution |
 | Poll timeout | "Capture timed out — no image detected" | User cancelled or clipboard empty |
 | Size exceeded | "Screenshot exceeds 3 MB limit — try a smaller region" | Selected region too large |
-| Success | "Screenshot attached" | — |
+| Success | "Screenshot sent" | — |
 
 ## Testing
 
