@@ -98,7 +98,7 @@ async function handleCapture(api: TuiPluginApi): Promise<void> {
     // `permission_missing` carries the System Settings path in `error.fix`.
     const error = spawnResult.error;
     if (error.type === "user_cancelled") {
-      api.ui.toast({ variant: "info", message: "Capture cancelled" });
+      api.ui.toast({ variant: "error", message: "Screenshot cancelled" });
       return;
     }
     let msg: string;
