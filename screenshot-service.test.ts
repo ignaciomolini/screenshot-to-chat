@@ -5,7 +5,6 @@ import { randomUUID } from "node:crypto";
 import {
   validateSize,
   buildFilePart,
-  readCapturedImage,
   pollClipboard,
   MAX_IMAGE_BYTES,
   type CaptureError,
@@ -129,91 +128,12 @@ describe("encodeFileToBase64", () => {
   });
 });
 
-// ── readCapturedImage (integration — mocked Bun.spawn) ──────────────────────
-
-describe("readCapturedImage", () => {
-  let originalSpawn: typeof Bun.spawn;
-
-  beforeEach(() => {
-    originalSpawn = Bun.spawn;
-  });
-
-  afterEach(() => {
-    (Bun as any).spawn = originalSpawn;
-  });
-
-  it("returns base64 string when clipboard has image", async () => {
-    const fakeBase64 = "iVBORw0KGgoAAAANSUhEUg==";
-    const fakeStdout = new Response(fakeBase64 + "\n").body;
-
-    (Bun as any).spawn = mock(() => ({
-      stdout: fakeStdout,
-      stderr: new Response("").body,
-      exitCode: 0,
-      exited: Promise.resolve(0),
-      pid: 1234,
-      kill: mock(() => {}),
-      ref: mock(() => {}),
-      unref: mock(() => {}),
-    }));
-
-    const result = await readCapturedImage();
-    expect(result).toBe(fakeBase64);
-  });
-
-  it("returns null when clipboard has no image", async () => {
-    const fakeStdout = new Response("\n").body;
-
-    (Bun as any).spawn = mock(() => ({
-      stdout: fakeStdout,
-      stderr: new Response("").body,
-      exitCode: 0,
-      exited: Promise.resolve(0),
-      pid: 1234,
-      kill: mock(() => {}),
-      ref: mock(() => {}),
-      unref: mock(() => {}),
-    }));
-
-    const result = await readCapturedImage();
-    expect(result).toBeNull();
-  });
-
-  it("returns null when PowerShell fails", async () => {
-    const fakeStdout = new Response("").body;
-
-    (Bun as any).spawn = mock(() => ({
-      stdout: fakeStdout,
-      stderr: new Response("error").body,
-      exitCode: 1,
-      exited: Promise.resolve(1),
-      pid: 1234,
-      kill: mock(() => {}),
-      ref: mock(() => {}),
-      unref: mock(() => {}),
-    }));
-
-    const result = await readCapturedImage();
-    expect(result).toBeNull();
-  });
-
-  it("returns null when spawn throws", async () => {
-    (Bun as any).spawn = mock(() => {
-      throw new Error("ENOENT");
-    });
-
-    const result = await readCapturedImage();
-    expect(result).toBeNull();
-  });
-});
-
 // ── pollClipboard (integration — mocked readCapturedImage) ──────────────────
 
 describe("pollClipboard", () => {
-  // We can't easily mock readCapturedImage since it's an internal call within
-  // pollClipboard. Instead, we test the timeout behavior by verifying that
-  // pollClipboard returns a timeout error when no image is found.
-  // For the success path, we rely on the readCapturedImage tests above.
+  // The platform-specific readCapturedImage tests live next to their module
+  // (screenshot-service.platforms/windows.test.ts). This block is a contract
+  // test — verifies the return shapes of the success and timeout paths.
 
   it("returns timeout error when no image found (short timeout)", async () => {
     // Override POLL_INTERVAL_MS and POLL_TIMEOUT_MS via module mocking
