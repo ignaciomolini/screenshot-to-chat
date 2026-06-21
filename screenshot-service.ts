@@ -163,7 +163,7 @@ export async function spawnSnipping(): Promise<
  * Returns base64-encoded JPEG string (resized to MAX_DIMENSION, quality JPEG_QUALITY),
  * or null if no image is on the clipboard.
  */
-export async function readClipboard(): Promise<string | null> {
+export async function readCapturedImage(): Promise<string | null> {
   try {
     const proc = Bun.spawn(
       ["powershell", "-NoProfile", "-NonInteractive", "-Command", CLIPBOARD_PS_SCRIPT],
@@ -188,7 +188,7 @@ export async function pollClipboard(): Promise<CaptureResult> {
   const maxAttempts = POLL_TIMEOUT_MS / POLL_INTERVAL_MS;
 
   for (let i = 0; i < maxAttempts; i++) {
-    const base64 = await readClipboard();
+    const base64 = await readCapturedImage();
     if (base64) return { ok: true, base64, sizeBytes: base64.length };
     await sleep(POLL_INTERVAL_MS);
   }

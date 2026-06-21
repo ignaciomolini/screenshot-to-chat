@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import {
   validateSize,
   buildFilePart,
-  readClipboard,
+  readCapturedImage,
   pollClipboard,
   MAX_IMAGE_BYTES,
   type CaptureError,
@@ -129,9 +129,9 @@ describe("encodeFileToBase64", () => {
   });
 });
 
-// ── readClipboard (integration — mocked Bun.spawn) ───────────────────────────
+// ── readCapturedImage (integration — mocked Bun.spawn) ──────────────────────
 
-describe("readClipboard", () => {
+describe("readCapturedImage", () => {
   let originalSpawn: typeof Bun.spawn;
 
   beforeEach(() => {
@@ -157,7 +157,7 @@ describe("readClipboard", () => {
       unref: mock(() => {}),
     }));
 
-    const result = await readClipboard();
+    const result = await readCapturedImage();
     expect(result).toBe(fakeBase64);
   });
 
@@ -175,7 +175,7 @@ describe("readClipboard", () => {
       unref: mock(() => {}),
     }));
 
-    const result = await readClipboard();
+    const result = await readCapturedImage();
     expect(result).toBeNull();
   });
 
@@ -193,7 +193,7 @@ describe("readClipboard", () => {
       unref: mock(() => {}),
     }));
 
-    const result = await readClipboard();
+    const result = await readCapturedImage();
     expect(result).toBeNull();
   });
 
@@ -202,18 +202,18 @@ describe("readClipboard", () => {
       throw new Error("ENOENT");
     });
 
-    const result = await readClipboard();
+    const result = await readCapturedImage();
     expect(result).toBeNull();
   });
 });
 
-// ── pollClipboard (integration — mocked readClipboard) ───────────────────────
+// ── pollClipboard (integration — mocked readCapturedImage) ──────────────────
 
 describe("pollClipboard", () => {
-  // We can't easily mock readClipboard since it's an internal call within
+  // We can't easily mock readCapturedImage since it's an internal call within
   // pollClipboard. Instead, we test the timeout behavior by verifying that
   // pollClipboard returns a timeout error when no image is found.
-  // For the success path, we rely on the readClipboard tests above.
+  // For the success path, we rely on the readCapturedImage tests above.
 
   it("returns timeout error when no image found (short timeout)", async () => {
     // Override POLL_INTERVAL_MS and POLL_TIMEOUT_MS via module mocking
