@@ -1,6 +1,9 @@
 /**
- * Screenshot capture service — pure/async functions for clipboard-based
- * screenshot capture on Windows via SnippingTool + PowerShell.
+ * Screenshot capture service — pure/async functions, types, and a platform
+ * dispatcher. The dispatcher routes `spawnSnipping` and `readCapturedImage`
+ * to the per-platform module matching `process.platform`. Shared helpers
+ * (`validateSize`, `buildFilePart`, `encodeFileToBase64`, `pollClipboard`)
+ * live here and are platform-agnostic.
  *
  * Extracted from the plugin entry point to enable unit/integration testing.
  */
@@ -22,21 +25,27 @@ export const MAX_DIMENSION = 1568;
 /** JPEG quality (0-100). 75 is the sweet spot for screenshots: small files, readable text. */
 export const JPEG_QUALITY = 75;
 
-/** Windows snipping tool executable. */
-export const SNIPPING_TOOL = "SnippingTool.exe";
-
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type CaptureError =
-  | { type: "platform_unsupported"; platform: string }
-  | { type: "tool_unavailable" }
+  | { type: "tool_unavailable"; message?: string }
   | { type: "user_cancelled" }
   | { type: "poll_timeout" }
   | { type: "size_exceeded"; sizeBytes: number; limitBytes: number }
-  | { type: "spawn_failed"; message: string };
+  | { type: "spawn_failed"; message: string }
+  | { type: "permission_missing"; platform: "darwin"; fix: string };
 
 export type CaptureResult =
   | { ok: true; base64: string; sizeBytes: number }
+  | { ok: false; error: CaptureError };
+
+export type SpawnResult =
+  | { ok: true }
+  | { ok: false; error: CaptureError };
+
+export type ReadCapturedResult =
+  | string
+  | null
   | { ok: false; error: CaptureError };
 
 export interface FilePart {
@@ -46,39 +55,38 @@ export interface FilePart {
   filename: string;
 }
 
-// ── PowerShell clipboard script ──────────────────────────────────────────────
+// ── Platform dispatcher ──────────────────────────────────────────────────────
 
-const CLIPBOARD_PS_SCRIPT = `
-Add-Type -AssemblyName System.Windows.Forms
-$img = [System.Windows.Forms.Clipboard]::GetImage()
-if ($img) {
-    $maxDim = ${MAX_DIMENSION}
-    $newW = $img.Width
-    $newH = $img.Height
-    if ($newW -gt $maxDim -or $newH -gt $maxDim) {
-        $ratio = [Math]::Min($maxDim / $newW, $maxDim / $newH)
-        $newW = [int]($newW * $ratio)
-        $newH = [int]($newH * $ratio)
-        $bmp = New-Object System.Drawing.Bitmap($newW, $newH)
-        $g = [System.Drawing.Graphics]::FromImage($bmp)
-        $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-        $g.SmoothingMode = [System.Drawing.SmoothingMode]::HighQuality
-        $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-        $g.DrawImage($img, 0, 0, $newW, $newH)
-        $g.Dispose()
-        $img.Dispose()
-        $img = $bmp
-    }
-    $ms = New-Object System.IO.MemoryStream
-    $jpegCodec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
-    $encoderParams = New-Object System.Drawing.Imaging.EncoderParameters(1)
-    $encoderParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, [long]${JPEG_QUALITY})
-    $img.Save($ms, $jpegCodec, $encoderParams)
-    [Convert]::ToBase64String($ms.ToArray())
-    $ms.Dispose()
-    $img.Dispose()
-}
-`.trim();
+// Route `spawnSnipping` and `readCapturedImage` to the per-platform module
+// matching `process.platform`. The route is decided once at module load —
+// the host OS does not change mid-process (ADR-1). Throws on import for
+// any platform outside { win32, darwin, linux } so unsupported hosts fail
+// fast at startup instead of at the first capture attempt.
+import * as windows from "./screenshot-service.platforms/windows.ts";
+import * as macos from "./screenshot-service.platforms/macos.ts";
+import * as linux from "./screenshot-service.platforms/linux.ts";
+
+type PlatformModule = {
+  spawnSnipping: () => Promise<SpawnResult>;
+  readCapturedImage: () => Promise<ReadCapturedResult>;
+};
+
+const MODULES: Record<string, PlatformModule | undefined> = {
+  win32: windows,
+  darwin: macos,
+  linux,
+};
+
+const PLATFORM_MODULE: PlatformModule = (() => {
+  const M = MODULES[process.platform];
+  if (!M) {
+    throw new Error(`Unsupported platform: ${process.platform}`);
+  }
+  return M;
+})();
+
+export const spawnSnipping: () => Promise<SpawnResult> = PLATFORM_MODULE.spawnSnipping;
+export const readCapturedImage: () => Promise<ReadCapturedResult> = PLATFORM_MODULE.readCapturedImage;
 
 // ── Pure functions ───────────────────────────────────────────────────────────
 
@@ -111,69 +119,68 @@ export function buildFilePart(base64: string): FilePart {
   };
 }
 
-// ── Async functions (Bun.spawn) ──────────────────────────────────────────────
-
 /**
- * Spawn SnippingTool.exe in /clip mode.
- * Resolves when the process exits (user finishes or cancels capture).
+ * Read a file from disk and return its base64-encoded contents.
+ * Returns `null` if the file is missing, empty, or cannot be read.
+ *
+ * Does NOT delete the file — cleanup is the caller's responsibility (wrap
+ * the call in a `try/finally` if the file is a temp artifact).
  */
-export async function spawnSnipping(): Promise<
-  { ok: true } | { ok: false; error: CaptureError }
-> {
+export async function encodeFileToBase64(path: string): Promise<string | null> {
   try {
-    const proc = Bun.spawn([SNIPPING_TOOL, "/clip"], {
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    await proc.exited;
-    if (proc.exitCode !== 0) {
-      return { ok: false, error: { type: "tool_unavailable" } };
-    }
-    return { ok: true };
-  } catch (e) {
-    return {
-      ok: false,
-      error: { type: "spawn_failed", message: (e as Error).message },
-    };
-  }
-}
-
-/**
- * Read an image from the Windows clipboard via PowerShell.
- * Returns base64-encoded JPEG string (resized to MAX_DIMENSION, quality JPEG_QUALITY),
- * or null if no image is on the clipboard.
- */
-export async function readClipboard(): Promise<string | null> {
-  try {
-    const proc = Bun.spawn(
-      ["powershell", "-NoProfile", "-NonInteractive", "-Command", CLIPBOARD_PS_SCRIPT],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    const output = await new Response(proc.stdout).text();
-    await proc.exited;
-
-    const base64 = output.trim();
-    if (!base64 || proc.exitCode !== 0) return null;
-    return base64;
+    const file = Bun.file(path);
+    if (!(await file.exists())) return null;
+    const buffer = await file.arrayBuffer();
+    if (buffer.byteLength === 0) return null;
+    return Buffer.from(buffer).toString("base64");
   } catch {
     return null;
   }
 }
 
+// ── Async functions (Bun.spawn) ──────────────────────────────────────────────
+
 /**
- * Poll the clipboard for a new image after SnippingTool exits.
- * Checks every POLL_INTERVAL_MS up to POLL_TIMEOUT_MS.
+ * Polling loop, extracted for testability. Accepts the reader as a
+ * parameter so tests can pass a mock without relying on module-level
+ * mocking (which is brittle under ESM's read-only namespace exports).
+ *
+ * The per-platform `readCapturedImage` may also return an error object
+ * (per design ADR-7) — typically `permission_missing` on macOS when
+ * Screen Recording is denied. In that case, the error is surfaced
+ * immediately instead of waiting for the 30 s poll budget. The
+ * `poll_timeout` case is replaced by the actual platform error, which
+ * carries a user-actionable `fix` string for the toast.
+ *
+ * Exported with an underscore prefix to mark it as an internal helper.
+ * The public entry point is `pollClipboard` below.
  */
-export async function pollClipboard(): Promise<CaptureResult> {
+export async function _pollClipboardLoop(
+  reader: () => Promise<ReadCapturedResult>,
+): Promise<CaptureResult> {
   const maxAttempts = POLL_TIMEOUT_MS / POLL_INTERVAL_MS;
 
   for (let i = 0; i < maxAttempts; i++) {
-    const base64 = await readClipboard();
-    if (base64) return { ok: true, base64, sizeBytes: base64.length };
+    const result = await reader();
+    if (typeof result === "string") {
+      return { ok: true, base64: result, sizeBytes: result.length };
+    }
+    if (result !== null) {
+      // Error-object form: surface the error immediately, no more polling.
+      return result;
+    }
     await sleep(POLL_INTERVAL_MS);
   }
 
   return { ok: false, error: { type: "poll_timeout" } };
+}
+
+/**
+ * Poll the clipboard for a new image after the capture tool exits.
+ * Checks every POLL_INTERVAL_MS up to POLL_TIMEOUT_MS.
+ */
+export async function pollClipboard(): Promise<CaptureResult> {
+  return _pollClipboardLoop(readCapturedImage);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

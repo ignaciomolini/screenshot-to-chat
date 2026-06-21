@@ -1,10 +1,16 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   validateSize,
   buildFilePart,
-  readClipboard,
   pollClipboard,
+  spawnSnipping,
+  readCapturedImage,
+  _pollClipboardLoop,
   MAX_IMAGE_BYTES,
+  type CaptureError,
 } from "./screenshot-service.ts";
 
 // ── validateSize ─────────────────────────────────────────────────────────────
@@ -69,91 +75,121 @@ describe("buildFilePart", () => {
   });
 });
 
-// ── readClipboard (integration — mocked Bun.spawn) ───────────────────────────
+// ── Dispatcher ───────────────────────────────────────────────────────────────
 
-describe("readClipboard", () => {
-  let originalSpawn: typeof Bun.spawn;
-
-  beforeEach(() => {
-    originalSpawn = Bun.spawn;
+describe("dispatcher", () => {
+  it("exposes spawnSnipping and readCapturedImage as functions", () => {
+    expect(typeof spawnSnipping).toBe("function");
+    expect(typeof readCapturedImage).toBe("function");
   });
 
-  afterEach(() => {
-    (Bun as any).spawn = originalSpawn;
+  it("binds both functions to the current platform's module", async () => {
+    const win = await import("./screenshot-service.platforms/windows.ts");
+    const mac = await import("./screenshot-service.platforms/macos.ts");
+    const lin = await import("./screenshot-service.platforms/linux.ts");
+
+    const platform = process.platform as "win32" | "darwin" | "linux" | string;
+    const module = { win32: win, darwin: mac, linux: lin }[
+      platform as "win32" | "darwin" | "linux"
+    ];
+    if (!module) {
+      throw new Error(`unexpected test host platform: ${platform}`);
+    }
+
+    // The dispatcher must hand back the same function reference as the
+    // platform module — not just any function. This is what makes the
+    // "dispatcher binds the host module" requirement verifiable.
+    // The cast to Function is necessary because each platform module's
+    // local CaptureError union is narrower than the dispatcher's full union.
+    expect(spawnSnipping as Function).toBe(module.spawnSnipping);
+    expect(readCapturedImage as Function).toBe(module.readCapturedImage);
   });
 
-  it("returns base64 string when clipboard has image", async () => {
-    const fakeBase64 = "iVBORw0KGgoAAAANSUhEUg==";
-    const fakeStdout = new Response(fakeBase64 + "\n").body;
-
-    (Bun as any).spawn = mock(() => ({
-      stdout: fakeStdout,
-      stderr: new Response("").body,
-      exitCode: 0,
-      exited: Promise.resolve(0),
-      pid: 1234,
-      kill: mock(() => {}),
-      ref: mock(() => {}),
-      unref: mock(() => {}),
-    }));
-
-    const result = await readClipboard();
-    expect(result).toBe(fakeBase64);
-  });
-
-  it("returns null when clipboard has no image", async () => {
-    const fakeStdout = new Response("\n").body;
-
-    (Bun as any).spawn = mock(() => ({
-      stdout: fakeStdout,
-      stderr: new Response("").body,
-      exitCode: 0,
-      exited: Promise.resolve(0),
-      pid: 1234,
-      kill: mock(() => {}),
-      ref: mock(() => {}),
-      unref: mock(() => {}),
-    }));
-
-    const result = await readClipboard();
-    expect(result).toBeNull();
-  });
-
-  it("returns null when PowerShell fails", async () => {
-    const fakeStdout = new Response("").body;
-
-    (Bun as any).spawn = mock(() => ({
-      stdout: fakeStdout,
-      stderr: new Response("error").body,
-      exitCode: 1,
-      exited: Promise.resolve(1),
-      pid: 1234,
-      kill: mock(() => {}),
-      ref: mock(() => {}),
-      unref: mock(() => {}),
-    }));
-
-    const result = await readClipboard();
-    expect(result).toBeNull();
-  });
-
-  it("returns null when spawn throws", async () => {
-    (Bun as any).spawn = mock(() => {
-      throw new Error("ENOENT");
+  it("throws when imported on an unsupported platform", async () => {
+    // Force a fresh module load with a mocked process.platform. ESM cache
+    // keys include the query string, so the bust parameter gives us a new
+    // evaluation context for this assertion.
+    const original = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", {
+      value: "freebsd",
+      configurable: true,
     });
-
-    const result = await readClipboard();
-    expect(result).toBeNull();
+    try {
+      // Cast through `string` so TS does not try to resolve the literal
+      // path with a query string. The runtime import still receives the
+      // full string, which the ESM loader uses to bypass its cache.
+      const path = "./screenshot-service.ts?bust=unsupported" as string;
+      await expect(import(path)).rejects.toThrow(/Unsupported platform: freebsd/);
+    } finally {
+      if (original) {
+        Object.defineProperty(process, "platform", original);
+      }
+    }
   });
 });
 
-// ── pollClipboard (integration — mocked readClipboard) ───────────────────────
+// ── CaptureError type contract ───────────────────────────────────────────────
+
+describe("CaptureError union", () => {
+  it("narrows permission_missing to { platform: 'darwin'; fix: string }", () => {
+    const error: CaptureError = {
+      type: "permission_missing",
+      platform: "darwin",
+      fix: "Open System Settings → Privacy & Security → Screen Recording",
+    };
+    if (error.type === "permission_missing") {
+      // These assignments only compile if narrowing yields the declared shape.
+      const platform: "darwin" = error.platform;
+      const fix: string = error.fix;
+      expect(platform).toBe("darwin");
+      expect(fix).toBeTruthy();
+    } else {
+      throw new Error("narrowing failed");
+    }
+  });
+});
+
+// ── encodeFileToBase64 ───────────────────────────────────────────────────────
+
+describe("encodeFileToBase64", () => {
+  it("returns base64 of the file's raw bytes for a real file", async () => {
+    const path = join(tmpdir(), `s2c-encode-${randomUUID()}.bin`);
+    await Bun.write(path, new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f])); // "hello"
+    try {
+      const { encodeFileToBase64 } = await import("./screenshot-service.ts");
+      const result = await encodeFileToBase64(path);
+      expect(result).toBe(Buffer.from("hello").toString("base64"));
+    } finally {
+      await Bun.spawn(["rm", "-f", path]).exited;
+    }
+  });
+
+  it("returns null when the file does not exist", async () => {
+    const path = join(tmpdir(), `s2c-missing-${randomUUID()}.bin`);
+    const { encodeFileToBase64 } = await import("./screenshot-service.ts");
+    const result = await encodeFileToBase64(path);
+    expect(result).toBeNull();
+  });
+
+  it("returns null without throwing when the path is unreadable", async () => {
+    const path = join(tmpdir(), `s2c-empty-${randomUUID()}.bin`);
+    await Bun.write(path, ""); // empty file
+    try {
+      const { encodeFileToBase64 } = await import("./screenshot-service.ts");
+      const result = await encodeFileToBase64(path);
+      expect(result).toBeNull();
+    } finally {
+      await Bun.spawn(["rm", "-f", path]).exited;
+    }
+  });
+});
+
+// ── pollClipboard (integration — mocked readCapturedImage) ──────────────────
 
 describe("pollClipboard", () => {
-  // We can't easily mock readClipboard since it's an internal call within
-  // pollClipboard. Instead, we test the timeout behavior by verifying that
-  // pollClipboard returns a timeout error when no image is found.
-  // For the success path, we rely on the readClipboard tests above.
+  // The platform-specific readCapturedImage tests live next to their module
+  // (screenshot-service.platforms/windows.test.ts). This block is a contract
+  // test — verifies the return shapes of the success and timeout paths.
 
   it("returns timeout error when no image found (short timeout)", async () => {
     // Override POLL_INTERVAL_MS and POLL_TIMEOUT_MS via module mocking
@@ -183,6 +219,41 @@ describe("pollClipboard", () => {
     if (successResult.ok) {
       expect(successResult.base64).toBe("dGVzdA==");
       expect(successResult.sizeBytes).toBe(8);
+    }
+  });
+
+  it("short-circuits on permission_missing error object (no 30s wait)", async () => {
+    // Per design ADR-7: pollClipboard must surface a permission_missing
+    // error from readCapturedImage immediately, not wait for poll_timeout.
+    //
+    // We exercise the polling loop directly via `_pollClipboardLoop`
+    // (the internal helper extracted for testability) with a stub reader
+    // that returns the error-object form. The public `pollClipboard`
+    // delegates to this helper, so this test covers the full short-circuit
+    // behavior. Going through the helper (rather than mocking
+    // `readCapturedImage` on the namespace) sidesteps ESM's read-only
+    // namespace exports and bun:test's globally-scoped `mock.module`.
+    let callCount = 0;
+    const result = await _pollClipboardLoop(async () => {
+      callCount++;
+      return {
+        ok: false as const,
+        error: {
+          type: "permission_missing" as const,
+          platform: "darwin" as const,
+          fix: "Open System Settings → Privacy & Security → Screen Recording",
+        },
+      };
+    });
+
+    expect(callCount).toBe(1); // short-circuited: reader called exactly once
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.type).toBe("permission_missing");
+      if (result.error.type === "permission_missing") {
+        expect(result.error.platform).toBe("darwin");
+        expect(result.error.fix).toContain("Screen Recording");
+      }
     }
   });
 });
