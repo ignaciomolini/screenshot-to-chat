@@ -28,7 +28,6 @@ export const JPEG_QUALITY = 75;
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type CaptureError =
-  | { type: "platform_unsupported"; platform: string }
   | { type: "tool_unavailable"; message?: string }
   | { type: "user_cancelled" }
   | { type: "poll_timeout" }
