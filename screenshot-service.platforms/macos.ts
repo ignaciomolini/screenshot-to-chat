@@ -11,6 +11,15 @@
 
 import type { CaptureError } from "../screenshot-service.ts";
 
+/**
+ * Default `fix` string for `permission_missing` — direct display in a toast.
+ * Per design §4.m: points to System Settings → Privacy & Security → Screen
+ * Recording. Exported so the test suite (and future localizers) can
+ * reference the canonical English copy.
+ */
+export const MACOS_PERMISSION_FIX =
+  "macOS Screen Recording permission required. Open System Settings → Privacy & Security → Screen Recording and enable access for this terminal.";
+
 export async function spawnSnipping(): Promise<
   { ok: true } | { ok: false; error: CaptureError }
 > {
