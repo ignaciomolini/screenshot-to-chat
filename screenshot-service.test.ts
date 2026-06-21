@@ -6,6 +6,8 @@ import {
   validateSize,
   buildFilePart,
   pollClipboard,
+  spawnSnipping,
+  readCapturedImage,
   MAX_IMAGE_BYTES,
   type CaptureError,
 } from "./screenshot-service.ts";
@@ -69,6 +71,59 @@ describe("buildFilePart", () => {
     const part = buildFilePart(base64);
     expect(part.url).toEndWith(base64);
     expect(part.url).toStartWith("data:image/jpeg;base64,");
+  });
+});
+
+// ── Dispatcher ───────────────────────────────────────────────────────────────
+
+describe("dispatcher", () => {
+  it("exposes spawnSnipping and readCapturedImage as functions", () => {
+    expect(typeof spawnSnipping).toBe("function");
+    expect(typeof readCapturedImage).toBe("function");
+  });
+
+  it("binds both functions to the current platform's module", async () => {
+    const win = await import("./screenshot-service.platforms/windows.ts");
+    const mac = await import("./screenshot-service.platforms/macos.ts");
+    const lin = await import("./screenshot-service.platforms/linux.ts");
+
+    const platform = process.platform as "win32" | "darwin" | "linux" | string;
+    const module = { win32: win, darwin: mac, linux: lin }[
+      platform as "win32" | "darwin" | "linux"
+    ];
+    if (!module) {
+      throw new Error(`unexpected test host platform: ${platform}`);
+    }
+
+    // The dispatcher must hand back the same function reference as the
+    // platform module — not just any function. This is what makes the
+    // "dispatcher binds the host module" requirement verifiable.
+    // The cast to Function is necessary because each platform module's
+    // local CaptureError union is narrower than the dispatcher's full union.
+    expect(spawnSnipping as Function).toBe(module.spawnSnipping);
+    expect(readCapturedImage as Function).toBe(module.readCapturedImage);
+  });
+
+  it("throws when imported on an unsupported platform", async () => {
+    // Force a fresh module load with a mocked process.platform. ESM cache
+    // keys include the query string, so the bust parameter gives us a new
+    // evaluation context for this assertion.
+    const original = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", {
+      value: "freebsd",
+      configurable: true,
+    });
+    try {
+      // Cast through `string` so TS does not try to resolve the literal
+      // path with a query string. The runtime import still receives the
+      // full string, which the ESM loader uses to bypass its cache.
+      const path = "./screenshot-service.ts?bust=unsupported" as string;
+      await expect(import(path)).rejects.toThrow(/Unsupported platform: freebsd/);
+    } finally {
+      if (original) {
+        Object.defineProperty(process, "platform", original);
+      }
+    }
   });
 });
 

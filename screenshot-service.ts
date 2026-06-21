@@ -25,15 +25,6 @@ export const MAX_DIMENSION = 1568;
 /** JPEG quality (0-100). 75 is the sweet spot for screenshots: small files, readable text. */
 export const JPEG_QUALITY = 75;
 
-// ── Platform modules (re-exports) ────────────────────────────────────────────
-
-// Phase 2 transitional shim — the Windows module owns the live implementation;
-// the dispatcher in Phase 3 will pick the right platform module at module load.
-// These re-exports keep the public surface (`spawnSnipping`, `readCapturedImage`)
-// stable so the existing entry point and tests work without changes.
-import { spawnSnipping, readCapturedImage } from "./screenshot-service.platforms/windows.ts";
-export { spawnSnipping, readCapturedImage };
-
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type CaptureError =
@@ -49,12 +40,51 @@ export type CaptureResult =
   | { ok: true; base64: string; sizeBytes: number }
   | { ok: false; error: CaptureError };
 
+export type SpawnResult =
+  | { ok: true }
+  | { ok: false; error: CaptureError };
+
+export type ReadCapturedResult = string | null;
+
 export interface FilePart {
   type: "file";
   mime: "image/jpeg";
   url: string;
   filename: string;
 }
+
+// ── Platform dispatcher ──────────────────────────────────────────────────────
+
+// Route `spawnSnipping` and `readCapturedImage` to the per-platform module
+// matching `process.platform`. The route is decided once at module load —
+// the host OS does not change mid-process (ADR-1). Throws on import for
+// any platform outside { win32, darwin, linux } so unsupported hosts fail
+// fast at startup instead of at the first capture attempt.
+import * as windows from "./screenshot-service.platforms/windows.ts";
+import * as macos from "./screenshot-service.platforms/macos.ts";
+import * as linux from "./screenshot-service.platforms/linux.ts";
+
+type PlatformModule = {
+  spawnSnipping: () => Promise<SpawnResult>;
+  readCapturedImage: () => Promise<ReadCapturedResult>;
+};
+
+const MODULES: Record<string, PlatformModule | undefined> = {
+  win32: windows,
+  darwin: macos,
+  linux,
+};
+
+const PLATFORM_MODULE: PlatformModule = (() => {
+  const M = MODULES[process.platform];
+  if (!M) {
+    throw new Error(`Unsupported platform: ${process.platform}`);
+  }
+  return M;
+})();
+
+export const spawnSnipping: () => Promise<SpawnResult> = PLATFORM_MODULE.spawnSnipping;
+export const readCapturedImage: () => Promise<ReadCapturedResult> = PLATFORM_MODULE.readCapturedImage;
 
 // ── Pure functions ───────────────────────────────────────────────────────────
 
