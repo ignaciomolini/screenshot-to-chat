@@ -203,6 +203,26 @@ export async function captureWayland(
   return toolUnavailable(waylandInstallMessage());
 }
 
+/** Directory for temp capture files. `/tmp` is world-writable on Linux. */
+const TMP_DIR = "/tmp";
+
+/** Resize target longest edge (px) — matches dispatcher `MAX_DIMENSION`. */
+const MAX_DIMENSION = 1568;
+
+/** JPEG quality (0-100) — matches dispatcher `JPEG_QUALITY`. */
+const JPEG_QUALITY = 75;
+
+/** Per-distro install instructions for ImageMagick. */
+function imagemagickInstallMessage(): string {
+  return (
+    "Install ImageMagick:\n" +
+    "  sudo apt install imagemagick\n" +
+    "  sudo dnf install ImageMagick\n" +
+    "  sudo pacman -S imagemagick\n" +
+    "  brew install imagemagick"
+  );
+}
+
 /**
  * Spawn an interactive region capture. After this commit: routes x11
  * sessions through captureX11 and wayland sessions through captureWayland,
@@ -225,10 +245,75 @@ export async function spawnSnipping(): Promise<
 }
 
 /**
- * Read the captured PNG, resize via ImageMagick, base64-encode. Lands in
- * a later commit (Phase 5.3 / 5.4 in tasks.md). Until then: returns null
- * so the dispatcher's poll loop backs off without burning the budget.
+ * Read the captured PNG, resize via ImageMagick, base64-encode, and
+ * clean up the temp files in `finally` (per design §4.h, §4.i, §4.k;
+ * spec Req #11).
+ *
+ *   1. `which magick` (ImageMagick v7) → `magick <png> -resize 1568x1568
+ *      -quality 75 <jpg>` (preserves aspect ratio, no upscale).
+ *   2. Else `which convert` (ImageMagick v6) → same argv with `convert`.
+ *   3. Else `tool_unavailable` with per-distro install instructions.
+ *   4. `base64 -w 0 <jpg>` (GNU form — `-w 0` disables line wrapping,
+ *      no `tr -d '\n'` needed; macOS uses the BSD form per design §4.d).
+ *   5. `rm -f <png> <jpg>` in `finally`, regardless of success/failure.
  */
-export async function readCapturedImage(): Promise<string | null> {
-  return null;
+export async function readCapturedImage(): Promise<
+  string | null | { ok: false; error: CaptureError }
+> {
+  const tmpPng = `${TMP_DIR}/screenshot-to-chat-${crypto.randomUUID()}.png`;
+  const tmpJpg = tmpPng.replace(/\.png$/, ".jpg");
+  try {
+    const file = Bun.file(tmpPng);
+    if (!(await file.exists())) return null;
+
+    // ImageMagick v7 → v6 probe. v6 (convert) and v7 (magick) accept the
+    // same `-resize` / `-quality` flags, so the argv is identical except
+    // for the binary name. Per design §4.h.
+    let resizeTool: "magick" | "convert" | null = null;
+    if (await probeTool("magick")) {
+      resizeTool = "magick";
+    } else if (await probeTool("convert")) {
+      resizeTool = "convert";
+    } else {
+      return toolUnavailable(imagemagickInstallMessage());
+    }
+
+    const resize = Bun.spawn(
+      [
+        resizeTool,
+        tmpPng,
+        "-resize", `${MAX_DIMENSION}x${MAX_DIMENSION}`,
+        "-quality", String(JPEG_QUALITY),
+        tmpJpg,
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const resizeExit = await resize.exited;
+    if (resizeExit !== 0) return null;
+
+    // GNU base64: `base64 -w 0 <file>` disables line wrapping. No `tr`
+    // needed (the macOS path uses `base64 -i | tr -d '\n'` because BSD
+    // lacks `-w 0` — per design §4.d / §4.i).
+    const b64 = Bun.spawn(["base64", "-w", "0", tmpJpg], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [output, b64Exit] = await Promise.all([
+      new Response(b64.stdout).text(),
+      b64.exited,
+    ]);
+    if (b64Exit !== 0) return null;
+    const base64 = output.trim();
+    if (!base64) return null;
+    return base64;
+  } finally {
+    // Best-effort cleanup: `rm -f` swallows missing files so partial-
+    // failure paths (resize worked but base64 failed) still clean up
+    // cleanly. A rm failure must not mask the real result.
+    try {
+      await Bun.spawn(["rm", "-f", tmpPng, tmpJpg]).exited;
+    } catch {
+      // ignore
+    }
+  }
 }
