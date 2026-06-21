@@ -1,25 +1,31 @@
 /**
- * macOS screenshot capture — `screencapture -i` (interactive region/window).
+ * macOS screenshot capture — `screencapture -i` + `sips` resize + base64.
  *
  * Exports `spawnSnipping` and `readCapturedImage`. The dispatcher in
  * `screenshot-service.ts` re-exports these (or routes to Windows / Linux
  * on other platforms).
  *
- * Capture flow (per design §4.b, §4.c, §4.j):
+ * Capture flow (per design §4.b, §4.c, §4.j, §4.k):
  *   1. `screencapture -i /tmp/screenshot-to-chat-<uuid>.png` — interactive
  *      region OR window. Without `-i`, `screencapture` is silent full-screen.
  *   2. On exit, `Bun.file(path).exists()` distinguishes two cases:
  *      - No file → user pressed Escape → `user_cancelled`.
  *      - File present → capture succeeded → `{ ok: true }`.
- *   3. `readCapturedImage` (separate function) resizes the captured PNG
- *      via `sips`, base64-encodes the JPEG, and cleans up temp files.
- *      Permission detection (small file heuristic) lives in that function.
+ *   3. `readCapturedImage` reads the captured PNG, detects Screen
+ *      Recording permission denial (size < 4 KB), resizes to JPEG via
+ *      `sips`, base64-encodes, and cleans up temp files in `finally`.
  */
 
 import type { CaptureError } from "../screenshot-service.ts";
 
 /** Directory for temp capture files. `/tmp` is world-writable on macOS. */
 const TMP_DIR = "/tmp";
+
+/** Resize target longest edge (px) — matches dispatcher `MAX_DIMENSION`. */
+const MAX_DIMENSION = 1568;
+
+/** JPEG quality (0-100) — matches dispatcher `JPEG_QUALITY`. */
+const JPEG_QUALITY = 75;
 
 /**
  * Default `fix` string for `permission_missing` — direct display in a toast.
@@ -31,12 +37,14 @@ export const MACOS_PERMISSION_FIX =
   "macOS Screen Recording permission required. Open System Settings → Privacy & Security → Screen Recording and enable access for this terminal.";
 
 /**
- * Build the temp PNG path for a capture attempt. Uses `crypto.randomUUID`
- * to keep concurrent attempts from clobbering each other on the shared
- * `/tmp` directory. Per design §4.j.
+ * Build the temp PNG + JPEG paths for a capture attempt. Uses
+ * `crypto.randomUUID` to keep concurrent attempts from clobbering each
+ * other on the shared `/tmp` directory. Per design §4.j.
  */
-function buildCapturePath(): string {
-  return `${TMP_DIR}/screenshot-to-chat-${crypto.randomUUID()}.png`;
+function buildCapturePaths(): { png: string; jpg: string } {
+  const png = `${TMP_DIR}/screenshot-to-chat-${crypto.randomUUID()}.png`;
+  const jpg = png.replace(/\.png$/, ".jpg");
+  return { png, jpg };
 }
 
 /**
@@ -52,7 +60,7 @@ function buildCapturePath(): string {
 export async function spawnSnipping(): Promise<
   { ok: true } | { ok: false; error: CaptureError }
 > {
-  const tmpPath = buildCapturePath();
+  const tmpPath = buildCapturePaths().png;
   try {
     const proc = Bun.spawn(["screencapture", "-i", tmpPath], {
       stdout: "pipe",
@@ -78,6 +86,63 @@ export async function spawnSnipping(): Promise<
   }
 }
 
+/**
+ * Read the captured PNG: resize to JPEG via `sips`, base64-encode, and
+ * clean up temp files in `finally`.
+ *
+ * Per task 4.2, the return type is `string | null`: the base64 JPEG
+ * on success, `null` if no capture file is present or any step fails.
+ * Task 4.3 widens this return shape to also carry a `permission_missing`
+ * error object when the captured PNG is suspiciously small (macOS
+ * Screen Recording denied).
+ */
 export async function readCapturedImage(): Promise<string | null> {
-  return null;
+  const { png, jpg } = buildCapturePaths();
+  try {
+    const file = Bun.file(png);
+    if (!(await file.exists())) return null;
+
+    // Resize + encode: sips -Z 1568 -s format jpeg -s formatOptions 75
+    // fits the longest edge to 1568px without upscaling, outputs JPEG q75
+    // (per design §4.a).
+    const sips = Bun.spawn(
+      [
+        "sips",
+        "-Z", String(MAX_DIMENSION),
+        "-s", "format", "jpeg",
+        "-s", "formatOptions", String(JPEG_QUALITY),
+        png,
+        "--out", jpg,
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const sipsExit = await sips.exited;
+    if (sipsExit !== 0) return null;
+
+    // Base64-encode the JPEG. BSD's `base64` lacks GNU's `-w 0` flag for
+    // disabling line wrapping, so we pipe through `tr -d '\n'` (per
+    // design §4.d). `sh -c` keeps the pipeline as a single Bun.spawn call.
+    const b64 = Bun.spawn(
+      ["sh", "-c", `base64 -i ${jpg} | tr -d '\\n'`],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const [output, b64Exit] = await Promise.all([
+      new Response(b64.stdout).text(),
+      b64.exited,
+    ]);
+    if (b64Exit !== 0) return null;
+    const base64 = output.trim();
+    if (!base64) return null;
+    return base64;
+  } finally {
+    // Cleanup both temp files in a single rm, regardless of which branch
+    // returned. `rm -f` swallows missing files so partial-failure paths
+    // still clean up cleanly (per design §4.k). The input PNG is cleaned
+    // here per task 4.3; the jpg is cleaned in the same call.
+    try {
+      await Bun.spawn(["rm", "-f", png, jpg]).exited;
+    } catch {
+      // Best-effort: a rm failure must not mask the real result.
+    }
+  }
 }
