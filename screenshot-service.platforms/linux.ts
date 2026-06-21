@@ -78,9 +78,76 @@ export function toolUnavailable(message: string): {
 }
 
 /**
+ * Probe whether a tool is on `PATH` by running `which <tool>` and checking
+ * the exit code. `which` exits 0 when found, 1 (or non-zero) when absent.
+ * No fallback tool is spawned when the probe fails (cheap, per design §4.f).
+ */
+export async function probeTool(tool: string): Promise<boolean> {
+  try {
+    const proc = Bun.spawn(["which", tool], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const code = await proc.exited;
+    return code === 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Per-distro install instructions for the X11 capture tools. */
+function x11InstallMessage(): string {
+  return (
+    "Install a screenshot tool for X11:\n" +
+    "  sudo apt install scrot\n" +
+    "  sudo dnf install scrot\n" +
+    "  sudo pacman -S scrot\n" +
+    "  brew install scrot"
+  );
+}
+
+/**
+ * X11 capture chain (per design §4.f / spec Req #9):
+ *   1. `which scrot` → if 0, run `scrot -s <tmp>` for interactive region.
+ *   2. Else `which maim` → if 0, run `maim -s <tmp>`.
+ *   3. Else `tool_unavailable` with per-distro install instructions.
+ *
+ * Success is disambiguated from user-cancellation by checking the output
+ * file's existence after exit 0 (same pattern as the macOS path).
+ */
+export async function captureX11(
+  tmpPng: string,
+): Promise<{ ok: true } | { ok: false; error: CaptureError }> {
+  if (await probeTool("scrot")) {
+    const proc = Bun.spawn(["scrot", "-s", tmpPng], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await proc.exited;
+    if (proc.exitCode === 0 && (await Bun.file(tmpPng).exists())) {
+      return { ok: true };
+    }
+    return toolUnavailable("scrot exited without writing a screenshot.");
+  }
+  if (await probeTool("maim")) {
+    const proc = Bun.spawn(["maim", "-s", tmpPng], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await proc.exited;
+    if (proc.exitCode === 0 && (await Bun.file(tmpPng).exists())) {
+      return { ok: true };
+    }
+    return toolUnavailable("maim exited without writing a screenshot.");
+  }
+  return toolUnavailable(x11InstallMessage());
+}
+
+/**
  * Spawn an interactive region capture. After this commit: performs session
- * detection and rejects headless sessions before any capture subprocess is
- * spawned. The actual X11/Wayland capture chains land in subsequent commits.
+ * detection, rejects headless sessions, and runs the X11 capture chain
+ * (scrot → maim) when the session is X11. The Wayland chain lands in the
+ * next commit.
  */
 export async function spawnSnipping(): Promise<
   { ok: true } | { ok: false; error: CaptureError }
@@ -91,11 +158,15 @@ export async function spawnSnipping(): Promise<
       "No display server detected. Set $DISPLAY (X11) or $WAYLAND_DISPLAY (Wayland).",
     );
   }
-  // Capture chain (X11 / Wayland) lands in the next commits. Until then,
-  // the dispatcher would reach this code path on a real Linux host with
-  // a display server and return tool_unavailable as a placeholder.
+  const tmpPng = `/tmp/screenshot-to-chat-${crypto.randomUUID()}.png`;
+  if (session === "x11") {
+    return captureX11(tmpPng);
+  }
+  // Wayland chain lands in the next commit. Until then, the dispatcher
+  // would reach this on a Wayland host and return tool_unavailable as a
+  // placeholder.
   return toolUnavailable(
-    `Linux ${session} capture chain not yet implemented in this build.`,
+    "Linux Wayland capture chain not yet implemented in this build.",
   );
 }
 
