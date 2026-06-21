@@ -3,11 +3,11 @@ schema: spec-driven
 
 context: |
   Tech stack: Bun 1.3.x + TypeScript (ESNext, strict mode)
-  Runtime: Bun (Windows)
+  Runtime: Bun (Windows / macOS / Linux)
   Framework: @opencode-ai/plugin/tui (TUI plugin) + @opencode-ai/plugin (server plugin)
-  Architecture: Screaming Architecture — service layer (screenshot-service.ts) separated from UI entry (screenshot-to-chat.tsx)
+  Architecture: Screaming Architecture — service layer (screenshot-service.ts) separated from UI entry (screenshot-to-chat.tsx). A dispatcher in screenshot-service.ts routes `spawnSnipping` and `readCapturedImage` to the per-platform module matching `process.platform` (win32 → windows.ts, darwin → macos.ts, linux → linux.ts). Shared helpers (validateSize, buildFilePart, encodeFileToBase64, pollClipboard) live in the dispatcher and are platform-agnostic.
   JSX: @opentui/solid via tsconfig
-  Testing: bun:test (built-in), unit + integration tests for service layer
+  Testing: bun:test (built-in), unit + integration tests for service layer. Per-platform test files use `it.skip` outside the host OS so the suite compiles and runs cleanly on any host.
   Style: TypeScript with strict mode, no linter/formatter configured
 
 strict_tdd: true

@@ -48,13 +48,9 @@ const tui: TuiPlugin = async (
 // ── handleCapture ────────────────────────────────────────────────────────────
 
 async function handleCapture(api: TuiPluginApi): Promise<void> {
-  if (process.platform !== "win32") {
-    api.ui.toast({
-      variant: "warning",
-      message: "Screenshot capture is only supported on Windows in this version",
-    });
-    return;
-  }
+  // The entry is platform-agnostic. Routing to Windows / macOS / Linux
+  // is the dispatcher's job (screenshot-service.ts), not the entry's.
+  // See spec Req #15: Entry Point Decoupling.
 
   // ── Resolve session ID (create one if route has none) ──────────────────────
   let sessionID: string | null = null;
@@ -96,11 +92,22 @@ async function handleCapture(api: TuiPluginApi): Promise<void> {
   // ── Spawn snipping tool ───────────────────────────────────────────────────
   const spawnResult = await spawnSnipping();
   if (!spawnResult.ok) {
-    const errMsg = (spawnResult.error as { message?: string }).message;
-    const msg =
-      spawnResult.error.type === "tool_unavailable"
-        ? "Screenshot tool not available on this system"
-        : `Failed to launch capture tool: ${errMsg ?? ""}`;
+    // Per design §3.8: the toast text depends on the error variant.
+    // `user_cancelled` is silent (user pressed Escape — no toast spam).
+    // `tool_unavailable` carries install hints in `error.message`.
+    // `permission_missing` carries the System Settings path in `error.fix`.
+    const error = spawnResult.error;
+    if (error.type === "user_cancelled") {
+      return;
+    }
+    let msg: string;
+    if (error.type === "tool_unavailable") {
+      msg = error.message ?? "Screenshot tool not available on this system";
+    } else if (error.type === "permission_missing") {
+      msg = error.fix;
+    } else {
+      msg = `Failed to launch capture tool: ${"message" in error ? (error.message ?? "") : ""}`;
+    }
     api.ui.toast({ variant: "error", message: msg });
     return;
   }
@@ -108,10 +115,23 @@ async function handleCapture(api: TuiPluginApi): Promise<void> {
   // ── Poll clipboard ───────────────────────────────────────────────────────
   const pollResult = await pollClipboard();
   if (!pollResult.ok) {
-    api.ui.toast({
-      variant: "warning",
-      message: "Capture timed out — no image detected",
-    });
+    // Per design §3.8: the dispatcher can surface tool_unavailable or
+    // permission_missing through the poll loop (e.g. macOS screen
+    // recording denied); toast the install hint or fix string.
+    const error = pollResult.error;
+    if (error.type === "tool_unavailable") {
+      api.ui.toast({
+        variant: "error",
+        message: error.message ?? "Capture tool not available",
+      });
+    } else if (error.type === "permission_missing") {
+      api.ui.toast({ variant: "error", message: error.fix });
+    } else {
+      api.ui.toast({
+        variant: "warning",
+        message: "Capture timed out — no image detected",
+      });
+    }
     return;
   }
 

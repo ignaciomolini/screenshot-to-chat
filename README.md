@@ -4,15 +4,18 @@
 
 ## What It Does
 
-Press `Ctrl+S` inside OpenCode. The native Windows Snipping Tool opens, you select a region, and the screenshot appears as an image attachment in your chat input — ready to send with your prompt.
+Press `Ctrl+S` inside OpenCode. A native region-select tool opens (Windows Snipping Tool, macOS `screencapture`, or a Linux X11/Wayland fallback chain), you select a region, and the screenshot appears as a JPEG image attachment in your chat input — ready to send with your prompt.
 
-No external tools. No temp files. No manual uploads.
+No manual uploads. No copy/paste. The plugin resizes, base64-encodes, and attaches in one step.
 
 ## Requirements
 
 - **OpenCode** with TUI plugin support
-- **Windows** (SnippingTool.exe must be available)
 - **Bun** runtime (used by OpenCode's plugin system)
+- **One of:**
+  - **Windows** — `SnippingTool.exe` is built in (no install)
+  - **macOS** — `screencapture` + `sips` are built in (Screen Recording permission required)
+  - **Linux** — see [Linux Dependencies](#linux-dependencies) below
 
 ## Installation
 
@@ -27,7 +30,7 @@ From the repo root, in PowerShell:
 This will:
 
 1. Create `~/.config/opencode/tui-plugins/screenshot-to-chat/` (the plugin's own folder)
-2. Copy both `screenshot-to-chat.tsx` and `screenshot-service.ts` into it
+2. Copy `screenshot-to-chat.tsx`, `screenshot-service.ts`, and the `screenshot-service.platforms/` directory into it
 3. Add the entry-point path to the `plugin` array in your `~/.config/opencode/tui.json`
 4. Back up your `tui.json` before mutating it
 5. Clean up any legacy single-file install from older versions
@@ -46,22 +49,24 @@ If you want to do it manually instead, see [Manual install](#manual-install) bel
 
 1. Create a folder for the plugin inside your OpenCode plugins directory:
    - Windows: `%USERPROFILE%\.config\opencode\tui-plugins\screenshot-to-chat\`
-2. Copy both files from this repo into that folder:
+   - macOS / Linux: `~/.config/opencode/tui-plugins/screenshot-to-chat/`
+2. Copy the plugin files from this repo into that folder:
    - `screenshot-to-chat.tsx`
    - `screenshot-service.ts`
+   - `screenshot-service.platforms/` (directory)
 3. Add the entry-point path to the `plugin` array in your `tui.json`:
 
    ```json
    {
      "plugin": [
-       "C:\\Users\\YOU\\.config\\opencode\\tui-plugins\\screenshot-to-chat\\screenshot-to-chat.tsx"
+       "/home/YOU/.config/opencode/tui-plugins/screenshot-to-chat/screenshot-to-chat.tsx"
      ]
    }
    ```
 
 4. Restart OpenCode.
 
-The two files need to live side by side in the same folder — the entry imports helpers from the service. No `bun install` is needed; the plugin uses OpenCode's own copies of `@opencode-ai/plugin` and `@opentui/solid`.
+The files need to live side by side in the same folder — the entry imports helpers from the service and dispatches to the per-platform module matching your OS. No `bun install` is needed; the plugin uses OpenCode's own copies of `@opencode-ai/plugin` and `@opentui/solid`.
 
 ## Usage
 
@@ -89,12 +94,64 @@ then press Enter. Works in any session.
 
 ### Flow
 
-Regardless of how you trigger it, the rest is the same:
+Regardless of how you trigger it (or which OS you run on), the rest is the same:
 
-1. The native Windows Snipping Tool opens
+1. The OS-native region-select tool opens
 2. Select a screen region
 3. The screenshot attaches to your prompt as a thumbnail
 4. Type your question and press Enter
+
+## Platform Support
+
+| Platform | Status | Capture Tool | Image Resize | Notes |
+|----------|--------|--------------|--------------|-------|
+| Windows | ✅ Supported | `SnippingTool.exe /clip` | PowerShell `System.Drawing` | Built in |
+| macOS | ✅ Supported | `screencapture -i` | `sips` (built in) | Screen Recording permission required |
+| Linux (X11) | ✅ Supported | `scrot` → `maim` (fallback) | ImageMagick (`magick` v7 → `convert` v6) | See Linux Dependencies |
+| Linux (Wayland) | ✅ Supported | `slurp`+`grim` → `gnome-screenshot` → `spectacle` | ImageMagick (`magick` v7 → `convert` v6) | wlroots / GNOME / KDE |
+
+### Linux Dependencies
+
+The plugin shells out to standard capture tools and ImageMagick for resize. Pick the chain that matches your session type.
+
+**X11** (one of):
+
+```bash
+sudo apt install scrot                       # or maim
+sudo dnf install scrot
+sudo pacman -S scrot
+brew install scrot
+```
+
+**Wayland** (one of):
+
+```bash
+# wlroots compositors (Sway / Hyprland / Niri)
+sudo apt install slurp grim
+
+# GNOME
+sudo apt install gnome-screenshot
+
+# KDE
+sudo apt install spectacle
+```
+
+(also available via `dnf` / `pacman` / `brew`)
+
+**Image resize** (required on all Linux setups):
+
+```bash
+sudo apt install imagemagick
+sudo dnf install ImageMagick
+sudo pacman -S imagemagick
+brew install imagemagick
+```
+
+If a tool is missing, the plugin surfaces a toast with the exact install command for your distro.
+
+### macOS Setup
+
+`macos screencapture` and `sips` are built in — no install needed. On first capture, macOS will prompt for **Screen Recording** permission (System Settings → Privacy & Security → Screen Recording). The plugin detects when this is denied and surfaces a toast with the fix path.
 
 ## How It Works
 
@@ -103,20 +160,31 @@ Ctrl+S
     │
     ▼
 ┌─────────────────────┐
-│  SnippingTool.exe   │  ← OS-native region select
-│  /clip              │
+│  Dispatcher         │  ← routes by process.platform
+│  (screenshot-       │     to win32 | darwin | linux
+│   service.ts)       │
 └─────────┬───────────┘
+          │
+    ┌─────┴──────┬───────────────┐
+    ▼            ▼               ▼
+  Windows      macOS           Linux
+  SnippingTool screencapture    scrot/maim/slurp|grim/
+  /clip       -i               gnome-screenshot/spectacle
+    │            │               │
+    └─────┬──────┴───────────────┘
           │ user selects region
           ▼
 ┌─────────────────────┐
-│  Clipboard Polling  │  ← PowerShell reads clipboard every 500ms
-│  (up to 30s)        │     via System.Windows.Forms.Clipboard
-│  + Resize + JPEG    │     Resizes to max 1568px, encodes q75
+│  Image Resize       │  ← fits longest edge to 1568px, JPEG q75
+│  (Windows: PS,      │     preserves aspect ratio, no upscale
+│   macOS: sips,      │
+│   Linux: magick)    │
 └─────────┬───────────┘
-          │ image found
+          │
           ▼
 ┌─────────────────────┐
-│  Size Validation    │  ← Rejects images > 3 MB
+│  Base64 Encode      │  ← in-memory; no temp files leak
+│  + Size Validation  │     rejects images > 3 MB
 └─────────┬───────────┘
           │ ok
           ▼
@@ -131,12 +199,16 @@ Ctrl+S
 ### Architecture
 
 ```
-screenshot-to-chat.tsx    ← Plugin entry: command registration, orchestration, toasts
-screenshot-service.ts     ← Pure/async functions: spawn, clipboard, validate, build
-screenshot-service.test.ts← 12 unit + integration tests
+screenshot-to-chat.tsx    ← Plugin entry: command registration, orchestration, toasts (platform-agnostic)
+screenshot-service.ts     ← Dispatcher + shared helpers: validateSize, buildFilePart, encodeFileToBase64, pollClipboard
+screenshot-service.platforms/
+  windows.ts              ← SnippingTool + PowerShell (Windows)
+  macos.ts                ← screencapture + sips (macOS)
+  linux.ts                ← session detect + X11/Wayland chain + ImageMagick (Linux)
+*.test.ts                 ← Unit + integration tests (per-platform tests skip on non-host)
 ```
 
-The service layer is extracted from the plugin entry to enable testing without the TUI runtime.
+The dispatcher binds `spawnSnipping` and `readCapturedImage` to the platform module matching `process.platform` at module load (ADR-1). Shared helpers (`validateSize`, `buildFilePart`, `encodeFileToBase64`, `pollClipboard`) are platform-agnostic and live in `screenshot-service.ts`.
 
 ## Configuration
 
@@ -159,11 +231,10 @@ Adjust via `POLL_INTERVAL_MS` and `POLL_TIMEOUT_MS` constants.
 
 | Error | Toast Message | Cause |
 |-------|---------------|-------|
-| Platform unsupported | "Screenshot capture is only supported on Windows in this version" | Running on macOS/Linux |
-| Prompt unavailable | "Prompt not available — open a session first" | No active chat session |
-| Tool unavailable | "Screenshot tool not available on this system" | SnippingTool.exe not found or crashed |
+| Tool unavailable | Install-hint text (e.g. `sudo apt install scrot`) | Per-OS capture tool missing (e.g. scrot / slurp+grim / gnome-screenshot / spectacle) |
+| Permission missing | "macOS Screen Recording permission required…" toast | macOS Screen Recording not granted |
 | Spawn failed | "Failed to launch capture tool: {error}" | OS blocked execution |
-| Poll timeout | "Capture timed out — no image detected" | User cancelled or clipboard empty |
+| Poll timeout | "Capture timed out — no image detected" | User cancelled or no image detected |
 | Size exceeded | "Screenshot exceeds 3 MB limit — try a smaller region" | Selected region too large |
 | Success | "Screenshot sent" | — |
 
@@ -177,46 +248,32 @@ bun test
 bunx tsc --noEmit
 ```
 
+The per-platform test files (`screenshot-service.platforms/{macos,linux}.test.ts`) skip on non-host via the `it.skip` pattern, so CI on any OS sees a stable test count and no phantom failures. End-to-end verification on each platform still needs that host.
+
 ### Test Coverage
 
 | Function | Tests |
 |----------|-------|
-| `validateSize` | ✅ Under limit, at limit, over limit, empty |
-| `buildFilePart` | ✅ Correct structure, mime type, filename |
-| `injectToPrompt` | ✅ Append to empty, append to existing, preserve text |
-| `readClipboard` | ✅ Image found, empty, error |
-| `pollClipboard` | ✅ Immediate find, retry then find, timeout |
+| `validateSize` | Under limit, at limit, over limit, empty |
+| `buildFilePart` | Correct structure, mime type, filename |
+| `encodeFileToBase64` | Real file returns base64, missing file returns null, empty file returns null |
+| `pollClipboard` (contract) | Success / timeout shapes; short-circuit on permission_missing |
+| Dispatcher | Functions bound to current platform; throws on unsupported platform |
+| Windows capture | `SnippingTool` exit codes, clipboard read, spawn failure |
+| macOS capture | `screencapture`, `sips` + base64, permission detection, cleanup |
+| Linux capture | Session detect, X11 / Wayland chain, ImageMagick v6/v7, cleanup |
+| Entry point | No `process.platform` guard, no Windows-only string |
 
 ## Known Limitations
 
-1. **Windows only** — macOS and Linux support requires platform-specific capture commands (planned for v2)
-2. **No image editing** — what you capture is what you get (no crop, annotate, or filter)
-3. **No capture history** — only the most recent capture is available
+1. **No image editing** — what you capture is what you get (no crop, annotate, or filter)
+2. **No capture history** — only the most recent capture is available
+3. **Linux end-to-end needs a real desktop session** — the test suite covers the chain logic via mocks, but actual capture needs X11 or Wayland to be running
+4. **macOS first-launch permission prompt** — Screen Recording must be granted once before the first capture
 
 ## Security
 
-- Images are processed **entirely in memory** — no temp files written to disk
+- Images are processed **in memory** after capture (only the brief temp-file window during resize)
 - No network requests — images stay local until you explicitly send the message
-- Clipboard is read only after SnippingTool exits — no background monitoring
-
-## Platform Support
-
-| Platform | Status | Tool |
-|----------|--------|------|
-| Windows | ✅ MVP | SnippingTool.exe /clip |
-| macOS | 🔜 Planned | `screencapture -i` |
-| Linux | 🔜 Planned | `gnome-screenshot` or `scrot` |
-
-
-### Development Workflow
-
-1. Clone the repo
-2. `bun install`
-3. Make changes
-4. `bun test` — verify tests pass
-5. `bunx tsc --noEmit` — verify types
-6. Test in OpenCode TUI
-
-## License
-
-MIT
+- Temp files are cleaned up in a `finally` block (the `rm -f` call swallows missing files for partial-failure paths)
+- Temp files live in `/tmp` with random UUID names; permissions are not tightened (the world-writable default allows other users' tools to read mid-capture — the cleanup is the security boundary)
