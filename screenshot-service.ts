@@ -111,6 +111,25 @@ export function buildFilePart(base64: string): FilePart {
   };
 }
 
+/**
+ * Read a file from disk and return its base64-encoded contents.
+ * Returns `null` if the file is missing, empty, or cannot be read.
+ *
+ * Does NOT delete the file — cleanup is the caller's responsibility (wrap
+ * the call in a `try/finally` if the file is a temp artifact).
+ */
+export async function encodeFileToBase64(path: string): Promise<string | null> {
+  try {
+    const file = Bun.file(path);
+    if (!(await file.exists())) return null;
+    const buffer = await file.arrayBuffer();
+    if (buffer.byteLength === 0) return null;
+    return Buffer.from(buffer).toString("base64");
+  } catch {
+    return null;
+  }
+}
+
 // ── Async functions (Bun.spawn) ──────────────────────────────────────────────
 
 /**

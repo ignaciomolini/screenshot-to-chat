@@ -1,4 +1,7 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   validateSize,
   buildFilePart,
@@ -66,6 +69,41 @@ describe("buildFilePart", () => {
     const part = buildFilePart(base64);
     expect(part.url).toEndWith(base64);
     expect(part.url).toStartWith("data:image/jpeg;base64,");
+  });
+});
+
+// ── encodeFileToBase64 ───────────────────────────────────────────────────────
+
+describe("encodeFileToBase64", () => {
+  it("returns base64 of the file's raw bytes for a real file", async () => {
+    const path = join(tmpdir(), `s2c-encode-${randomUUID()}.bin`);
+    await Bun.write(path, new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f])); // "hello"
+    try {
+      const { encodeFileToBase64 } = await import("./screenshot-service.ts");
+      const result = await encodeFileToBase64(path);
+      expect(result).toBe(Buffer.from("hello").toString("base64"));
+    } finally {
+      await Bun.spawn(["rm", "-f", path]).exited;
+    }
+  });
+
+  it("returns null when the file does not exist", async () => {
+    const path = join(tmpdir(), `s2c-missing-${randomUUID()}.bin`);
+    const { encodeFileToBase64 } = await import("./screenshot-service.ts");
+    const result = await encodeFileToBase64(path);
+    expect(result).toBeNull();
+  });
+
+  it("returns null without throwing when the path is unreadable", async () => {
+    const path = join(tmpdir(), `s2c-empty-${randomUUID()}.bin`);
+    await Bun.write(path, ""); // empty file
+    try {
+      const { encodeFileToBase64 } = await import("./screenshot-service.ts");
+      const result = await encodeFileToBase64(path);
+      expect(result).toBeNull();
+    } finally {
+      await Bun.spawn(["rm", "-f", path]).exited;
+    }
   });
 });
 
