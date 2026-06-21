@@ -8,6 +8,7 @@ import {
   pollClipboard,
   spawnSnipping,
   readCapturedImage,
+  _pollClipboardLoop,
   MAX_IMAGE_BYTES,
   type CaptureError,
 } from "./screenshot-service.ts";
@@ -218,6 +219,41 @@ describe("pollClipboard", () => {
     if (successResult.ok) {
       expect(successResult.base64).toBe("dGVzdA==");
       expect(successResult.sizeBytes).toBe(8);
+    }
+  });
+
+  it("short-circuits on permission_missing error object (no 30s wait)", async () => {
+    // Per design ADR-7: pollClipboard must surface a permission_missing
+    // error from readCapturedImage immediately, not wait for poll_timeout.
+    //
+    // We exercise the polling loop directly via `_pollClipboardLoop`
+    // (the internal helper extracted for testability) with a stub reader
+    // that returns the error-object form. The public `pollClipboard`
+    // delegates to this helper, so this test covers the full short-circuit
+    // behavior. Going through the helper (rather than mocking
+    // `readCapturedImage` on the namespace) sidesteps ESM's read-only
+    // namespace exports and bun:test's globally-scoped `mock.module`.
+    let callCount = 0;
+    const result = await _pollClipboardLoop(async () => {
+      callCount++;
+      return {
+        ok: false as const,
+        error: {
+          type: "permission_missing" as const,
+          platform: "darwin" as const,
+          fix: "Open System Settings → Privacy & Security → Screen Recording",
+        },
+      };
+    });
+
+    expect(callCount).toBe(1); // short-circuited: reader called exactly once
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.type).toBe("permission_missing");
+      if (result.error.type === "permission_missing") {
+        expect(result.error.platform).toBe("darwin");
+        expect(result.error.fix).toContain("Screen Recording");
+      }
     }
   });
 });

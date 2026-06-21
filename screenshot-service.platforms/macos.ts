@@ -21,6 +21,15 @@ import type { CaptureError } from "../screenshot-service.ts";
 /** Directory for temp capture files. `/tmp` is world-writable on macOS. */
 const TMP_DIR = "/tmp";
 
+/**
+ * Captured PNG below this byte size is treated as a TCC permission
+ * denial. When Screen Recording is denied, macOS's TCC stack writes a
+ * near-empty placeholder PNG (~200–3000 bytes) instead of the real
+ * pixels. 4 KB is well above that ceiling but well below any real-region
+ * screenshot (per design §4.c).
+ */
+const MIN_CAPTURE_BYTES = 4096;
+
 /** Resize target longest edge (px) — matches dispatcher `MAX_DIMENSION`. */
 const MAX_DIMENSION = 1568;
 
@@ -87,20 +96,37 @@ export async function spawnSnipping(): Promise<
 }
 
 /**
- * Read the captured PNG: resize to JPEG via `sips`, base64-encode, and
- * clean up temp files in `finally`.
+ * Read the captured PNG: detect permission denial, resize to JPEG via
+ * `sips`, base64-encode, and clean up temp files in `finally`.
  *
- * Per task 4.2, the return type is `string | null`: the base64 JPEG
- * on success, `null` if no capture file is present or any step fails.
- * Task 4.3 widens this return shape to also carry a `permission_missing`
- * error object when the captured PNG is suspiciously small (macOS
- * Screen Recording denied).
+ * Return shape (per design ADR-7):
+ * - `string` — base64-encoded JPEG.
+ * - `null`   — no capture file present (nothing to read).
+ * - `{ ok: false; error: { type: "permission_missing", ... } }` — Screen
+ *   Recording permission was denied; the placeholder PNG was detected
+ *   by the size heuristic. The dispatcher's `pollClipboard` recognizes
+ *   this form and short-circuits instead of waiting for `poll_timeout`.
  */
-export async function readCapturedImage(): Promise<string | null> {
+export async function readCapturedImage(): Promise<
+  string | null | { ok: false; error: CaptureError }
+> {
   const { png, jpg } = buildCapturePaths();
   try {
     const file = Bun.file(png);
     if (!(await file.exists())) return null;
+
+    // Permission heuristic: a real-region screenshot is always > 4 KB.
+    // Anything smaller is the TCC placeholder PNG (per design §4.c).
+    if (file.size < MIN_CAPTURE_BYTES) {
+      return {
+        ok: false,
+        error: {
+          type: "permission_missing",
+          platform: "darwin",
+          fix: MACOS_PERMISSION_FIX,
+        },
+      };
+    }
 
     // Resize + encode: sips -Z 1568 -s format jpeg -s formatOptions 75
     // fits the longest edge to 1568px without upscaling, outputs JPEG q75

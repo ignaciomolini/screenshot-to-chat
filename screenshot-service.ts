@@ -44,7 +44,10 @@ export type SpawnResult =
   | { ok: true }
   | { ok: false; error: CaptureError };
 
-export type ReadCapturedResult = string | null;
+export type ReadCapturedResult =
+  | string
+  | null
+  | { ok: false; error: CaptureError };
 
 export interface FilePart {
   type: "file";
@@ -139,19 +142,46 @@ export async function encodeFileToBase64(path: string): Promise<string | null> {
 // ── Async functions (Bun.spawn) ──────────────────────────────────────────────
 
 /**
- * Poll the clipboard for a new image after SnippingTool exits.
- * Checks every POLL_INTERVAL_MS up to POLL_TIMEOUT_MS.
+ * Polling loop, extracted for testability. Accepts the reader as a
+ * parameter so tests can pass a mock without relying on module-level
+ * mocking (which is brittle under ESM's read-only namespace exports).
+ *
+ * The per-platform `readCapturedImage` may also return an error object
+ * (per design ADR-7) — typically `permission_missing` on macOS when
+ * Screen Recording is denied. In that case, the error is surfaced
+ * immediately instead of waiting for the 30 s poll budget. The
+ * `poll_timeout` case is replaced by the actual platform error, which
+ * carries a user-actionable `fix` string for the toast.
+ *
+ * Exported with an underscore prefix to mark it as an internal helper.
+ * The public entry point is `pollClipboard` below.
  */
-export async function pollClipboard(): Promise<CaptureResult> {
+export async function _pollClipboardLoop(
+  reader: () => Promise<ReadCapturedResult>,
+): Promise<CaptureResult> {
   const maxAttempts = POLL_TIMEOUT_MS / POLL_INTERVAL_MS;
 
   for (let i = 0; i < maxAttempts; i++) {
-    const base64 = await readCapturedImage();
-    if (base64) return { ok: true, base64, sizeBytes: base64.length };
+    const result = await reader();
+    if (typeof result === "string") {
+      return { ok: true, base64: result, sizeBytes: result.length };
+    }
+    if (result !== null) {
+      // Error-object form: surface the error immediately, no more polling.
+      return result;
+    }
     await sleep(POLL_INTERVAL_MS);
   }
 
   return { ok: false, error: { type: "poll_timeout" } };
+}
+
+/**
+ * Poll the clipboard for a new image after the capture tool exits.
+ * Checks every POLL_INTERVAL_MS up to POLL_TIMEOUT_MS.
+ */
+export async function pollClipboard(): Promise<CaptureResult> {
+  return _pollClipboardLoop(readCapturedImage);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
