@@ -33,7 +33,8 @@ export type CaptureError =
   | { type: "user_cancelled" }
   | { type: "poll_timeout" }
   | { type: "size_exceeded"; sizeBytes: number; limitBytes: number }
-  | { type: "spawn_failed"; message: string };
+  | { type: "spawn_failed"; message: string }
+  | { type: "permission_missing"; platform: "darwin"; fix: string };
 
 export type CaptureResult =
   | { ok: true; base64: string; sizeBytes: number }

@@ -8,6 +8,7 @@ import {
   readClipboard,
   pollClipboard,
   MAX_IMAGE_BYTES,
+  type CaptureError,
 } from "./screenshot-service.ts";
 
 // ── validateSize ─────────────────────────────────────────────────────────────
@@ -69,6 +70,27 @@ describe("buildFilePart", () => {
     const part = buildFilePart(base64);
     expect(part.url).toEndWith(base64);
     expect(part.url).toStartWith("data:image/jpeg;base64,");
+  });
+});
+
+// ── CaptureError type contract ───────────────────────────────────────────────
+
+describe("CaptureError union", () => {
+  it("narrows permission_missing to { platform: 'darwin'; fix: string }", () => {
+    const error: CaptureError = {
+      type: "permission_missing",
+      platform: "darwin",
+      fix: "Open System Settings → Privacy & Security → Screen Recording",
+    };
+    if (error.type === "permission_missing") {
+      // These assignments only compile if narrowing yields the declared shape.
+      const platform: "darwin" = error.platform;
+      const fix: string = error.fix;
+      expect(platform).toBe("darwin");
+      expect(fix).toBeTruthy();
+    } else {
+      throw new Error("narrowing failed");
+    }
   });
 });
 
