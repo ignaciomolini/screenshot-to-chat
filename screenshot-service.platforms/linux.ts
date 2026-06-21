@@ -143,11 +143,70 @@ export async function captureX11(
   return toolUnavailable(x11InstallMessage());
 }
 
+/** Per-distro install instructions for the Wayland capture tools. */
+function waylandInstallMessage(): string {
+  return (
+    "Install a screenshot tool for Wayland:\n" +
+    "  wlroots (Sway/Hyprland/Niri): sudo apt install slurp grim\n" +
+    "  GNOME:                        sudo apt install gnome-screenshot\n" +
+    "  KDE:                          sudo apt install spectacle\n" +
+    "  (also available via dnf / pacman / brew)"
+  );
+}
+
 /**
- * Spawn an interactive region capture. After this commit: performs session
- * detection, rejects headless sessions, and runs the X11 capture chain
- * (scrot → maim) when the session is X11. The Wayland chain lands in the
- * next commit.
+ * Wayland capture chain (per design §4.g / spec Req #10):
+ *   1. `which slurp` AND `which grim` (both must be present) → `sh -c "slurp | grim -g - <tmp>"`.
+ *   2. Else `which gnome-screenshot` → if 0, `gnome-screenshot -a -f <tmp>`.
+ *   3. Else `which spectacle` → if 0, `spectacle --region --output <tmp>`.
+ *   4. Else `tool_unavailable` with per-chain install instructions.
+ *
+ * The slurp|grim chain needs `sh -c` because it's a pipeline (per design
+ * §4.g). `-g -` tells grim to read geometry from stdin (slurp prints it).
+ */
+export async function captureWayland(
+  tmpPng: string,
+): Promise<{ ok: true } | { ok: false; error: CaptureError }> {
+  if ((await probeTool("slurp")) && (await probeTool("grim"))) {
+    const proc = Bun.spawn(["sh", "-c", `slurp | grim -g - ${tmpPng}`], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await proc.exited;
+    if (proc.exitCode === 0 && (await Bun.file(tmpPng).exists())) {
+      return { ok: true };
+    }
+    return toolUnavailable("slurp|grim exited without writing a screenshot.");
+  }
+  if (await probeTool("gnome-screenshot")) {
+    const proc = Bun.spawn(["gnome-screenshot", "-a", "-f", tmpPng], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await proc.exited;
+    if (proc.exitCode === 0 && (await Bun.file(tmpPng).exists())) {
+      return { ok: true };
+    }
+    return toolUnavailable("gnome-screenshot exited without writing a screenshot.");
+  }
+  if (await probeTool("spectacle")) {
+    const proc = Bun.spawn(["spectacle", "--region", "--output", tmpPng], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await proc.exited;
+    if (proc.exitCode === 0 && (await Bun.file(tmpPng).exists())) {
+      return { ok: true };
+    }
+    return toolUnavailable("spectacle exited without writing a screenshot.");
+  }
+  return toolUnavailable(waylandInstallMessage());
+}
+
+/**
+ * Spawn an interactive region capture. After this commit: routes x11
+ * sessions through captureX11 and wayland sessions through captureWayland,
+ * with a headless rejection up front.
  */
 export async function spawnSnipping(): Promise<
   { ok: true } | { ok: false; error: CaptureError }
@@ -162,12 +221,7 @@ export async function spawnSnipping(): Promise<
   if (session === "x11") {
     return captureX11(tmpPng);
   }
-  // Wayland chain lands in the next commit. Until then, the dispatcher
-  // would reach this on a Wayland host and return tool_unavailable as a
-  // placeholder.
-  return toolUnavailable(
-    "Linux Wayland capture chain not yet implemented in this build.",
-  );
+  return captureWayland(tmpPng);
 }
 
 /**
