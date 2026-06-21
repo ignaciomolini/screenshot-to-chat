@@ -57,6 +57,19 @@ function buildCapturePaths(): { png: string; jpg: string } {
 }
 
 /**
+ * Module-level state that carries the path from `spawnSnipping` to
+ * `readCapturedImage`. Without this, each function would call
+ * `crypto.randomUUID()` independently and the two paths would diverge —
+ * `readCapturedImage` would look for a file at a different path than the
+ * one `spawnSnipping` wrote to, so the captured image would never be
+ * read. The pattern is consume-on-read: `spawnSnipping` sets the path,
+ * `readCapturedImage` reads and clears it. A subsequent `readCapturedImage`
+ * without a fresh `spawnSnipping` returns `null` (the dispatcher's
+ * `pollClipboard` keeps polling in that case).
+ */
+let lastCapturePath: string | null = null;
+
+/**
  * Spawn `screencapture -i` for an interactive region / window capture.
  * Resolves when the process exits.
  *
@@ -86,6 +99,10 @@ export async function spawnSnipping(): Promise<
     if (!exists) {
       return { ok: false, error: { type: "user_cancelled" } };
     }
+    // Share the path with readCapturedImage via module state. Without this,
+    // readCapturedImage would call randomUUID() again and look at a
+    // different file (consume-on-read pattern).
+    lastCapturePath = tmpPath;
     return { ok: true };
   } catch (e) {
     return {
@@ -110,7 +127,13 @@ export async function spawnSnipping(): Promise<
 export async function readCapturedImage(): Promise<
   string | null | { ok: false; error: CaptureError }
 > {
-  const { png, jpg } = buildCapturePaths();
+  // Consume-on-read: read the path set by spawnSnipping and clear it. If
+  // spawnSnipping was not called first (or was already consumed), the
+  // dispatcher's pollClipboard keeps polling until its timeout.
+  if (!lastCapturePath) return null;
+  const png = lastCapturePath;
+  lastCapturePath = null;
+  const jpg = png.replace(/\.png$/, ".jpg");
   try {
     const file = Bun.file(png);
     if (!(await file.exists())) return null;
