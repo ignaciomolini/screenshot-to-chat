@@ -29,7 +29,7 @@ export const JPEG_QUALITY = 75;
 
 export type CaptureError =
   | { type: "platform_unsupported"; platform: string }
-  | { type: "tool_unavailable" }
+  | { type: "tool_unavailable"; message?: string }
   | { type: "user_cancelled" }
   | { type: "poll_timeout" }
   | { type: "size_exceeded"; sizeBytes: number; limitBytes: number }
