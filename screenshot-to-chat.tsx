@@ -93,11 +93,12 @@ async function handleCapture(api: TuiPluginApi): Promise<void> {
   const spawnResult = await spawnSnipping();
   if (!spawnResult.ok) {
     // Per design §3.8: the toast text depends on the error variant.
-    // `user_cancelled` is silent (user pressed Escape — no toast spam).
+    // `user_cancelled` → info toast (deliberate user action, not a problem).
     // `tool_unavailable` carries install hints in `error.message`.
     // `permission_missing` carries the System Settings path in `error.fix`.
     const error = spawnResult.error;
     if (error.type === "user_cancelled") {
+      api.ui.toast({ variant: "info", message: "Capture cancelled" });
       return;
     }
     let msg: string;

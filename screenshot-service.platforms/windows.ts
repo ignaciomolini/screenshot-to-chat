@@ -25,6 +25,7 @@ const JPEG_QUALITY = 75;
 
 // ── PowerShell clipboard script ──────────────────────────────────────────────
 
+/** Script to read+resize+encode the clipboard image (used by readCapturedImage). */
 const CLIPBOARD_PS_SCRIPT = `
 Add-Type -AssemblyName System.Windows.Forms
 $img = [System.Windows.Forms.Clipboard]::GetImage()
@@ -57,31 +58,86 @@ if ($img) {
 }
 `.trim();
 
+/** Script to clear the clipboard (used by spawnSnipping before each capture). */
+const CLEAR_CLIPBOARD_PS_SCRIPT = `
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Clipboard]::Clear()
+`.trim();
+
+/** Best-effort clipboard clear. Failures are swallowed because we never want a
+ *  clear-clipboard error to block the capture flow — worst case the previous
+ *  image stays on the clipboard (the original stale-image bug). */
+async function clearClipboard(): Promise<void> {
+  try {
+    const proc = Bun.spawn(
+      ["powershell", "-NoProfile", "-NonInteractive", "-Command", CLEAR_CLIPBOARD_PS_SCRIPT],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    await proc.exited;
+  } catch {
+    // intentional no-op
+  }
+}
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 // ── Capture ──────────────────────────────────────────────────────────────────
 
 /**
- * Spawn SnippingTool.exe in /clip mode.
- * Resolves when the process exits (user finishes or cancels capture).
+ * Spawn SnippingTool.exe in /clip mode and disambiguate capture from cancel.
+ *
+ * Flow:
+ *   1. Clear the clipboard (best-effort) so a stale image from a previous
+ *      capture cannot leak into a new attempt.
+ *   2. Spawn SnippingTool. It exits 0 on both capture AND Escape — the OS
+ *      does not treat Escape as an error — so we cannot rely on exit code
+ *      to distinguish them.
+ *   3. After the tool exits, do a few quick read attempts (300ms total) to
+ *      give the OS a moment to write the captured image to the clipboard.
+ *      - Image present → user captured something, return ok.
+ *      - Image still absent → user pressed Escape, return user_cancelled.
  */
 export async function spawnSnipping(): Promise<
-  { ok: true } | { ok: false; error: { type: "tool_unavailable" } | { type: "spawn_failed"; message: string } }
+  | { ok: true }
+  | {
+      ok: false;
+      error:
+        | { type: "user_cancelled" }
+        | { type: "tool_unavailable" }
+        | { type: "spawn_failed"; message: string };
+    }
 > {
+  await clearClipboard();
+
+  let proc: ReturnType<typeof Bun.spawn>;
   try {
-    const proc = Bun.spawn([SNIPPING_TOOL, "/clip"], {
+    proc = Bun.spawn([SNIPPING_TOOL, "/clip"], {
       stderr: "pipe",
       stdout: "pipe",
     });
-    await proc.exited;
-    if (proc.exitCode !== 0) {
-      return { ok: false, error: { type: "tool_unavailable" } };
-    }
-    return { ok: true };
   } catch (e) {
     return {
       ok: false,
       error: { type: "spawn_failed", message: (e as Error).message },
     };
   }
+
+  await proc.exited;
+  if (proc.exitCode !== 0) {
+    return { ok: false, error: { type: "tool_unavailable" } };
+  }
+
+  // Quick checks: up to 3 attempts × 100ms = ~300ms. If a real capture is
+  // happening, the image will be on the clipboard well within this window
+  // (SnippingTool writes synchronously before exiting on Windows).
+  for (let i = 0; i < 3; i++) {
+    const base64 = await readCapturedImage();
+    if (base64) return { ok: true };
+    await sleep(100);
+  }
+
+  return { ok: false, error: { type: "user_cancelled" } };
 }
 
 /**
