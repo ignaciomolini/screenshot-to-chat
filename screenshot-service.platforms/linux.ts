@@ -1,20 +1,31 @@
 /**
- * Linux screenshot capture — session detection + headless rejection.
+ * Linux screenshot capture — session detection, X11/Wayland fallback
+ * chains, ImageMagick resize, GNU base64 encode, temp-file cleanup.
  *
- * Real capture chains (X11 scrot/maim, Wayland grim+slurp/gnome-screenshot/
- * spectacle) and ImageMagick processing land in subsequent commits of the
- * PR 3 chain. This commit adds the `detectSession()` helper and the
- * headless rejection path that must run BEFORE any capture tool is spawned.
+ * Exports `spawnSnipping` and `readCapturedImage`. The dispatcher in
+ * `screenshot-service.ts` re-exports these for `process.platform === "linux"`.
  *
- * Capture flow (per design §3.7, §4.e):
+ * Capture flow (per design §3.5–§3.7, §4.e–§4.k):
  *   1. `Bun.spawn(["sh", "-c", SESSION_DETECT_SCRIPT])` — echoes "x11",
- *      "wayland", or "none" based on the precedence in the script.
- *   2. If "none" or "tty" → return `tool_unavailable` without spawning
- *      any capture subprocess (per design §3.7 / spec Req #7).
+ *      "wayland", or "none" based on env-var precedence.
+ *   2. If "none" → return `tool_unavailable` ("No display server detected")
+ *      WITHOUT spawning any capture subprocess (spec Req #7).
+ *   3. X11 chain: `which scrot` → `scrot -s <tmp>`; else `which maim` →
+ *      `maim -s <tmp>`; else install-hint error.
+ *   4. Wayland chain: `which slurp` AND `which grim` →
+ *      `sh -c "slurp | grim -g - <tmp>"`; else `which gnome-screenshot` →
+ *      `gnome-screenshot -a -f <tmp>`; else `which spectacle` →
+ *      `spectacle --region --output <tmp>`; else install-hint error.
  *
- * The `sh -c` pattern matches `CLIPBOARD_PS_SCRIPT` in windows.ts and
- * `base64 -i | tr -d '\n'` in macos.ts — inline scripts invoked via
- * `Bun.spawn` (per design ADR-8).
+ * Read flow (per design §4.h, §4.i, §4.k):
+ *   5. `which magick` (ImageMagick v7) → `magick <png> -resize 1568x1568
+ *      -quality 75 <jpg>`; else `which convert` (v6); else install-hint.
+ *   6. `base64 -w 0 <jpg>` — GNU form, no line wrapping (no `tr` needed).
+ *      macOS uses the BSD `base64 -i | tr -d '\n'` form (see macos.ts).
+ *   7. `rm -f <png> <jpg>` in `finally`, regardless of success/failure.
+ *
+ * The `sh -c` pattern matches `CLIPBOARD_PS_SCRIPT` in windows.ts — inline
+ * scripts invoked via `Bun.spawn` (per design ADR-8).
  */
 
 import type { CaptureError } from "../screenshot-service.ts";
