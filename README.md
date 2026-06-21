@@ -4,7 +4,7 @@
 
 ## What It Does
 
-Press `Ctrl+S` inside OpenCode. A native region-select tool opens (Windows Snipping Tool, macOS `screencapture`, or a Linux X11/Wayland fallback chain), you select a region, and the screenshot appears as a JPEG image attachment in your chat input — ready to send with your prompt.
+Press `Ctrl+S` inside OpenCode. A native region-select tool opens (Windows Snipping Tool, macOS `screencapture`, or a Linux X11/Wayland fallback chain), you select a region, and the screenshot is captured and pre-attached to your active session. Type your prompt and press Enter — the JPEG travels with it to the model.
 
 No manual uploads. No copy/paste. The plugin resizes, base64-encodes, and attaches in one step.
 
@@ -19,7 +19,9 @@ No manual uploads. No copy/paste. The plugin resizes, base64-encodes, and attach
 
 ## Installation
 
-### Quick install (Windows, one command)
+### Quick install (Windows only)
+
+`install.ps1` is a Windows-only convenience script (it patches `tui.json` via PowerShell). macOS and Linux users should use the [Manual install](#manual-install) section below.
 
 From the repo root, in PowerShell:
 
@@ -98,8 +100,11 @@ Regardless of how you trigger it (or which OS you run on), the rest is the same:
 
 1. The OS-native region-select tool opens
 2. Select a screen region
-3. The screenshot attaches to your prompt as a thumbnail
-4. Type your question and press Enter
+3. The screenshot is resized to 1568px (longest edge, JPEG q75) and pre-attached to the session
+4. A success toast confirms the capture
+5. Type your question and press Enter — the image travels with your prompt to the model
+
+> **Note on visual feedback:** the plugin does not render an image preview in the TUI before you send. The toast is the only visible confirmation; if you need to verify the capture, the image is visible in the session's message preview after the model responds.
 
 ## Platform Support
 
@@ -268,12 +273,13 @@ The per-platform test files (`screenshot-service.platforms/{macos,linux}.test.ts
 
 1. **No image editing** — what you capture is what you get (no crop, annotate, or filter)
 2. **No capture history** — only the most recent capture is available
-3. **Linux end-to-end needs a real desktop session** — the test suite covers the chain logic via mocks, but actual capture needs X11 or Wayland to be running
-4. **macOS first-launch permission prompt** — Screen Recording must be granted once before the first capture
+3. **No visual preview before send** — the toast is the only feedback; the image is visible in the session preview only after the model responds
+4. **End-to-end needs a real desktop session** — both Linux (X11 or Wayland) and macOS require a logged-in graphical session with the necessary permissions. The test suite covers the chain logic via mocks, but real capture needs the actual platform
+5. **macOS first-launch permission prompt** — Screen Recording must be granted once before the first capture
 
 ## Security
 
-- Images are processed **in memory** after capture (only the brief temp-file window during resize)
+- Images are processed **in memory** after capture (only the brief temp-file window during resize on macOS/Linux)
 - No network requests — images stay local until you explicitly send the message
-- Temp files are cleaned up in a `finally` block (the `rm -f` call swallows missing files for partial-failure paths)
-- Temp files live in `/tmp` with random UUID names; permissions are not tightened (the world-writable default allows other users' tools to read mid-capture — the cleanup is the security boundary)
+- Temp files on macOS/Linux live in `/tmp` with random UUID names; cleaned up in a `finally` block (the `rm -f` call swallows missing files for partial-failure paths)
+- Note: temp files in `/tmp` use the system default permissions. Other local users on the same machine could read the image briefly between capture and cleanup. If you need stricter isolation, capture in a private directory (out of scope for this MVP)

@@ -1,6 +1,8 @@
 Markdown
 # 📄 PRD: OpenCode "Screenshot-to-Chat" Plugin
 
+> **Status (2026-06-21):** This PRD predates the implementation. The MVP it describes was implemented and extended with Linux/macOS support via the change `add-multi-platform-support` (merged to `main`). For the current scope, see [`README.md`](./README.md). For the full change history (proposal, spec, design, tasks, verify-report), see [`openspec/changes/archive/add-multi-platform-support/`](./openspec/changes/archive/add-multi-platform-support/).
+
 ## 1. Resumen Ejecutivo
 **Objetivo:** Desarrollar una extensión para OpenCode que permita al usuario capturar la pantalla (o una región específica) e inyectar automáticamente la imagen resultante como contexto visual en el input nativo del chat de OpenCode, manteniéndolo 100% agnóstico del agente o modelo subyacente.
 **Problema a resolver:** Fricción actual al compartir contexto visual. El usuario debe salir del editor, usar una herramienta externa de captura, guardar el archivo y subirlo manualmente al chat.
