@@ -14,12 +14,20 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SourceEntry = Join-Path $ScriptDir "screenshot-to-chat.tsx"
 $SourceService = Join-Path $ScriptDir "screenshot-service.ts"
+$SourcePlatformsDir = Join-Path $ScriptDir "screenshot-service.platforms"
+$SourcePlatformsWindows = Join-Path $SourcePlatformsDir "windows.ts"
+$SourcePlatformsMacos = Join-Path $SourcePlatformsDir "macos.ts"
+$SourcePlatformsLinux = Join-Path $SourcePlatformsDir "linux.ts"
 
 $UserConfigDir = Join-Path $env:USERPROFILE ".config\opencode"
 $PluginsDir = Join-Path $UserConfigDir "tui-plugins"
 $PluginDir = Join-Path $PluginsDir "screenshot-to-chat"
 $TargetEntry = Join-Path $PluginDir "screenshot-to-chat.tsx"
 $TargetService = Join-Path $PluginDir "screenshot-service.ts"
+$TargetPlatformsDir = Join-Path $PluginDir "screenshot-service.platforms"
+$TargetPlatformsWindows = Join-Path $TargetPlatformsDir "windows.ts"
+$TargetPlatformsMacos = Join-Path $TargetPlatformsDir "macos.ts"
+$TargetPlatformsLinux = Join-Path $TargetPlatformsDir "linux.ts"
 $TuiJsonPath = Join-Path $UserConfigDir "tui.json"
 
 # ── Preflight ────────────────────────────────────────────────────────────────
@@ -29,6 +37,18 @@ if (-not (Test-Path $SourceEntry)) {
 }
 if (-not (Test-Path $SourceService)) {
     Write-Error "Source file not found: $SourceService. Run this script from the plugin repo root."
+    exit 1
+}
+if (-not (Test-Path $SourcePlatformsWindows)) {
+    Write-Error "Source file not found: $SourcePlatformsWindows. Run this script from the plugin repo root."
+    exit 1
+}
+if (-not (Test-Path $SourcePlatformsMacos)) {
+    Write-Error "Source file not found: $SourcePlatformsMacos. Run this script from the plugin repo root."
+    exit 1
+}
+if (-not (Test-Path $SourcePlatformsLinux)) {
+    Write-Error "Source file not found: $SourcePlatformsLinux. Run this script from the plugin repo root."
     exit 1
 }
 if (-not (Test-Path $UserConfigDir)) {
@@ -50,6 +70,34 @@ if (-not (Test-Path $PluginDir)) {
 foreach ($pair in @(
     @{ From = $SourceEntry;   To = $TargetEntry },
     @{ From = $SourceService; To = $TargetService }
+)) {
+    if ($DryRun) {
+        Write-Host "[dry-run] Would copy: $($pair.From) -> $($pair.To)"
+    } else {
+        Copy-Item -Path $pair.From -Destination $pair.To -Force
+        Write-Host "Copied: $($pair.To)" -ForegroundColor Green
+    }
+}
+
+# ── Copy the per-platform module files into the subfolder ───────────────────
+# (The dispatcher in screenshot-service.ts imports from
+#  ./screenshot-service.platforms/{windows,macos,linux}.ts at module load.
+#  Without these files the plugin fails to load and OpenCode won't list it.
+#  Test files and the .gitkeep placeholder are intentionally NOT copied —
+#  they're dev-only and not needed at runtime.)
+if (-not (Test-Path $TargetPlatformsDir)) {
+    if ($DryRun) {
+        Write-Host "[dry-run] Would create directory: $TargetPlatformsDir"
+    } else {
+        New-Item -ItemType Directory -Force -Path $TargetPlatformsDir | Out-Null
+        Write-Host "Created directory: $TargetPlatformsDir" -ForegroundColor DarkGray
+    }
+}
+
+foreach ($pair in @(
+    @{ From = $SourcePlatformsWindows; To = $TargetPlatformsWindows },
+    @{ From = $SourcePlatformsMacos;   To = $TargetPlatformsMacos },
+    @{ From = $SourcePlatformsLinux;   To = $TargetPlatformsLinux }
 )) {
     if ($DryRun) {
         Write-Host "[dry-run] Would copy: $($pair.From) -> $($pair.To)"
