@@ -223,6 +223,19 @@ const MAX_DIMENSION = 1568;
 /** JPEG quality (0-100) — matches dispatcher `JPEG_QUALITY`. */
 const JPEG_QUALITY = 75;
 
+/**
+ * Module-level state that carries the path from `spawnSnipping` to
+ * `readCapturedImage`. Without this, each function would call
+ * `crypto.randomUUID()` independently and the two paths would diverge —
+ * `readCapturedImage` would look for a file at a different path than the
+ * one `spawnSnipping` wrote to. The pattern is consume-on-read:
+ * `spawnSnipping` sets the path on success, `readCapturedImage` reads
+ * and clears it. A subsequent `readCapturedImage` without a fresh
+ * `spawnSnipping` returns `null` (the dispatcher's `pollClipboard` keeps
+ * polling in that case).
+ */
+let lastCapturePath: string | null = null;
+
 /** Per-distro install instructions for ImageMagick. */
 function imagemagickInstallMessage(): string {
   return (
@@ -249,10 +262,16 @@ export async function spawnSnipping(): Promise<
     );
   }
   const tmpPng = `/tmp/screenshot-to-chat-${crypto.randomUUID()}.png`;
-  if (session === "x11") {
-    return captureX11(tmpPng);
+  // Run the capture tool. On success, share the path with readCapturedImage
+  // via module state (consume-on-read pattern). Without this, readCapturedImage
+  // would call randomUUID() again and look at a different file.
+  const result = session === "x11"
+    ? await captureX11(tmpPng)
+    : await captureWayland(tmpPng);
+  if (result.ok) {
+    lastCapturePath = tmpPng;
   }
-  return captureWayland(tmpPng);
+  return result;
 }
 
 /**
@@ -271,7 +290,12 @@ export async function spawnSnipping(): Promise<
 export async function readCapturedImage(): Promise<
   string | null | { ok: false; error: CaptureError }
 > {
-  const tmpPng = `${TMP_DIR}/screenshot-to-chat-${crypto.randomUUID()}.png`;
+  // Consume-on-read: read the path set by spawnSnipping and clear it. If
+  // spawnSnipping was not called first (or was already consumed), the
+  // dispatcher's pollClipboard keeps polling until its timeout.
+  if (!lastCapturePath) return null;
+  const tmpPng = lastCapturePath;
+  lastCapturePath = null;
   const tmpJpg = tmpPng.replace(/\.png$/, ".jpg");
   try {
     const file = Bun.file(tmpPng);

@@ -327,12 +327,19 @@ describe("linux", () => {
     const spawnCalls: string[][] = [];
     (Bun as any).spawn = mock((argv: string[]) => {
       spawnCalls.push(argv);
+      if (argv[0] === "sh") return okResult(expectedSessionOutput());
+      if (argv[0] === "which" && argv[1] === "scrot") return okResult();
+      if (argv[0] === "scrot") return okResult();
       if (argv[0] === "which" && argv[1] === "magick") return okResult();
       if (argv[0] === "magick") return okResult();
       if (argv[0] === "base64") return okResult("aGVsbG8=");
       if (argv[0] === "rm") return okResult();
       return failResult(1);
     });
+
+    // Pre-call spawnSnipping so the path is in module state.
+    const spawnResult = await spawnSnipping();
+    expect(spawnResult).toEqual({ ok: true });
 
     const result = await readCapturedImage();
     expect(result).toBe("aGVsbG8=");
@@ -350,6 +357,9 @@ describe("linux", () => {
     const spawnCalls: string[][] = [];
     (Bun as any).spawn = mock((argv: string[]) => {
       spawnCalls.push(argv);
+      if (argv[0] === "sh") return okResult(expectedSessionOutput());
+      if (argv[0] === "which" && argv[1] === "scrot") return okResult();
+      if (argv[0] === "scrot") return okResult();
       if (argv[0] === "which" && argv[1] === "magick") return failResult(1);
       if (argv[0] === "which" && argv[1] === "convert") return okResult();
       if (argv[0] === "convert") return okResult();
@@ -357,6 +367,10 @@ describe("linux", () => {
       if (argv[0] === "rm") return okResult();
       return failResult(1);
     });
+
+    // Pre-call spawnSnipping so the path is in module state.
+    const spawnResult = await spawnSnipping();
+    expect(spawnResult).toEqual({ ok: true });
 
     const result = await readCapturedImage();
     expect(result).toBe("aGVsbG8=");
@@ -373,8 +387,15 @@ describe("linux", () => {
     const spawnCalls: string[][] = [];
     (Bun as any).spawn = mock((argv: string[]) => {
       spawnCalls.push(argv);
+      if (argv[0] === "sh") return okResult(expectedSessionOutput());
+      if (argv[0] === "which" && argv[1] === "scrot") return okResult();
+      if (argv[0] === "scrot") return okResult();
       return failResult(1);
     });
+
+    // Pre-call spawnSnipping so the path is in module state.
+    const spawnResult = await spawnSnipping();
+    expect(spawnResult).toEqual({ ok: true });
 
     const result = await readCapturedImage();
     // Per design: ImageMagick missing → tool_unavailable. The dispatcher
@@ -404,12 +425,19 @@ describe("linux", () => {
     const spawnCalls: string[][] = [];
     (Bun as any).spawn = mock((argv: string[]) => {
       spawnCalls.push(argv);
+      if (argv[0] === "sh") return okResult(expectedSessionOutput());
+      if (argv[0] === "which" && argv[1] === "scrot") return okResult();
+      if (argv[0] === "scrot") return okResult();
       if (argv[0] === "which" && argv[1] === "magick") return okResult();
       if (argv[0] === "magick") return okResult();
       if (argv[0] === "base64") return okResult("aGVsbG8=");
       if (argv[0] === "rm") return okResult();
       return failResult(1);
     });
+
+    // Pre-call spawnSnipping so the path is in module state.
+    const spawnResult = await spawnSnipping();
+    expect(spawnResult).toEqual({ ok: true });
 
     await readCapturedImage();
 
@@ -431,12 +459,19 @@ describe("linux", () => {
     const spawnCalls: string[][] = [];
     (Bun as any).spawn = mock((argv: string[]) => {
       spawnCalls.push(argv);
+      if (argv[0] === "sh") return okResult(expectedSessionOutput());
+      if (argv[0] === "which" && argv[1] === "scrot") return okResult();
+      if (argv[0] === "scrot") return okResult();
       if (argv[0] === "which" && argv[1] === "magick") return okResult();
       if (argv[0] === "magick") return okResult();
       if (argv[0] === "base64") return okResult("aGVsbG8=");
       if (argv[0] === "rm") return okResult();
       return failResult(1);
     });
+
+    // Pre-call spawnSnipping so the path is in module state.
+    const spawnResult = await spawnSnipping();
+    expect(spawnResult).toEqual({ ok: true });
 
     await readCapturedImage();
 
@@ -449,6 +484,110 @@ describe("linux", () => {
       // BSD form (macOS) would use `tr -d '\n'` — verify that path is
       // NOT used here. No `tr` invocation should appear.
       expect(spawnCalls.some((a) => a[0] === "tr")).toBe(false);
+    }
+  });
+
+  // ── path-sharing contract (PR 4 fix) ───────────────────────────────────
+
+  itLin("readCapturedImage uses the temp file path that spawnSnipping set", async () => {
+    // Without the path-sharing fix, spawnSnipping and readCapturedImage each
+    // call crypto.randomUUID() independently, so the file path spawnSnipping
+    // writes to is NOT the path readCapturedImage looks at. We force two
+    // distinct UUIDs here to expose the bug: spawnSnipping gets "spawn-uuid"
+    // (and writes the file there), then readCapturedImage is called and
+    // would otherwise get "read-uuid" (a path with no file). The fix makes
+    // them share the path via module state.
+    process.env.XDG_SESSION_TYPE = "x11";
+    delete process.env.WAYLAND_DISPLAY;
+    process.env.DISPLAY = ":0";
+
+    let uuidCount = 0;
+    (crypto as any).randomUUID = () => {
+      uuidCount++;
+      return uuidCount === 1 ? "spawn-uuid" : "read-uuid";
+    };
+    const spawnPath = `/tmp/screenshot-to-chat-spawn-uuid.png`;
+    const readPath = `/tmp/screenshot-to-chat-read-uuid.png`;
+    // Pre-create the file only at the path spawnSnipping uses.
+    await Bun.write(spawnPath, new Uint8Array(5000));
+
+    const spawnCalls: string[][] = [];
+    const magickCalls: string[][] = [];
+    (Bun as any).spawn = mock((argv: string[]) => {
+      spawnCalls.push(argv);
+      if (argv[0] === "sh") return okResult(expectedSessionOutput());
+      if (argv[0] === "which" && argv[1] === "scrot") return okResult();
+      if (argv[0] === "scrot") return okResult();
+      if (argv[0] === "which" && argv[1] === "magick") return okResult();
+      if (argv[0] === "magick") {
+        magickCalls.push(argv);
+        return okResult();
+      }
+      if (argv[0] === "base64") return okResult("YWJj");
+      if (argv[0] === "rm") return okResult();
+      return failResult(1);
+    });
+
+    try {
+      const spawnResult = await spawnSnipping();
+      expect(spawnResult).toEqual({ ok: true });
+      // scrot was called with the spawn-uuid path
+      const scrotCall = spawnCalls.find((a) => a[0] === "scrot");
+      expect(scrotCall).toBeDefined();
+      expect(scrotCall![2]).toBe(spawnPath);
+
+      const readResult = await readCapturedImage();
+      expect(readResult).toBe("YWJj");
+      // The magick call's input path must be the same one spawnSnipping used.
+      // Without the fix, magick would receive readPath (no such file → fail
+      // early) and the test would never reach the "YWJj" assertion.
+      expect(magickCalls[0]).toContain(spawnPath);
+      expect(magickCalls[0]).not.toContain("read-uuid");
+    } finally {
+      try { await Bun.spawn(["rm", "-f", spawnPath, readPath]).exited; } catch {}
+    }
+  });
+
+  itLin("readCapturedImage is consume-on-read (path cleared after first read)", async () => {
+    // After a successful read, the path is cleared from module state. The
+    // next readCapturedImage call must NOT regenerate the same path and
+    // re-find the file — it must return null until spawnSnipping sets a
+    // fresh path. This is the consume-on-read pattern that keeps the
+    // dispatcher single-shot per capture.
+    process.env.XDG_SESSION_TYPE = "x11";
+    delete process.env.WAYLAND_DISPLAY;
+    process.env.DISPLAY = ":0";
+
+    const fixedUuid = "consume-uuid";
+    (crypto as any).randomUUID = () => fixedUuid;
+    const capturePath = `/tmp/screenshot-to-chat-${fixedUuid}.png`;
+    await Bun.write(capturePath, new Uint8Array(5000));
+
+    (Bun as any).spawn = mock((argv: string[]) => {
+      if (argv[0] === "sh") return okResult(expectedSessionOutput());
+      if (argv[0] === "which" && argv[1] === "scrot") return okResult();
+      if (argv[0] === "scrot") return okResult();
+      if (argv[0] === "which" && argv[1] === "magick") return okResult();
+      if (argv[0] === "magick") return okResult();
+      if (argv[0] === "base64") return okResult("YWJj");
+      if (argv[0] === "rm") return okResult();
+      return failResult(1);
+    });
+
+    try {
+      const spawnResult = await spawnSnipping();
+      expect(spawnResult).toEqual({ ok: true });
+
+      const firstRead = await readCapturedImage();
+      expect(firstRead).toBe("YWJj");
+
+      // Re-create the file to ensure the second read returns null because
+      // the path state is cleared, not because the file is missing.
+      await Bun.write(capturePath, new Uint8Array(5000));
+      const secondRead = await readCapturedImage();
+      expect(secondRead).toBeNull();
+    } finally {
+      try { await Bun.spawn(["rm", "-f", capturePath]).exited; } catch {}
     }
   });
 });
