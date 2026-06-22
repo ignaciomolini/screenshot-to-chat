@@ -19,11 +19,29 @@ No manual uploads. No copy/paste. The plugin resizes, base64-encodes, and attach
 
 ## Installation
 
-### Quick install (Windows only)
+### One-line install
 
-`install.ps1` is a Windows-only convenience script (it patches `tui.json` via PowerShell). macOS and Linux users should use the [Manual install](#manual-install) section below.
+The fastest way to install — paste one line in your terminal, no clone needed. The script downloads the plugin files into a temp dir, installs them into `~/.config/opencode/tui-plugins/screenshot-to-chat/`, patches `tui.json`, and cleans up.
 
-From the repo root, in PowerShell:
+**Windows (PowerShell 5.1+):**
+
+```powershell
+irm https://raw.githubusercontent.com/ignaciomolini/screenshot-to-chat/main/install.ps1 | iex
+```
+
+**macOS / Linux (bash 3.2+):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ignaciomolini/screenshot-to-chat/main/install.sh | bash
+```
+
+Requires `jq` on macOS / Linux (`brew install jq` / `sudo apt install jq`).
+
+Restart OpenCode and you're done. The keybind is `Ctrl+S`.
+
+### Quick install (from a local clone, Windows)
+
+If you have a local clone of the repo (e.g. for development), you can also run the install script directly. From the repo root, in PowerShell:
 
 ```powershell
 .\install.ps1
@@ -43,6 +61,24 @@ Restart OpenCode and you're done. The keybind is `Ctrl+S`.
 
 ```powershell
 .\install.ps1 -DryRun    # Preview what would happen, no changes
+```
+
+If you want to do it manually instead, see [Manual install](#manual-install) below.
+
+### Quick install (from a local clone, macOS / Linux)
+
+If you have a local clone of the repo (e.g. for development), you can also run the install script directly. From the repo root:
+
+```bash
+./install.sh
+```
+
+This behaves the same as the Windows version: copies the plugin files into `~/.config/opencode/tui-plugins/screenshot-to-chat/`, patches `tui.json`, and backs up the config first. Requires `jq`.
+
+#### Options
+
+```bash
+./install.sh --dry-run    # Preview what would happen, no changes
 ```
 
 If you want to do it manually instead, see [Manual install](#manual-install) below.
