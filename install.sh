@@ -217,10 +217,17 @@ if [ -f "$LEGACY_FILE" ]; then
 fi
 
 # ── Patch tui.json ──────────────────────────────────────────────────────────
+# The config dir exists (we preflight-checked it) but tui.json itself
+# may be missing on a fresh OpenCode install - the file is initialized
+# lazily on first use. Bootstrap an empty plugin array so the rest of
+# the patching flow can add the entry normally.
 if [ ! -f "$TUI_JSON_PATH" ]; then
-    echo -e "\033[33mWarning: tui.json not found at $TUI_JSON_PATH. Add the plugin path to your config manually:\033[0m" >&2
-    echo -e "\033[33m  $TARGET_ENTRY\033[0m" >&2
-    exit 0
+    if [ "$DRY_RUN" = true ]; then
+        echo "[dry-run] Would create tui.json at $TUI_JSON_PATH (didn't exist)"
+    else
+        printf '{\n  "plugin": []\n}\n' > "$TUI_JSON_PATH"
+        echo -e "\033[90mCreated tui.json (it didn't exist)\033[0m"
+    fi
 fi
 
 # Backup before mutating

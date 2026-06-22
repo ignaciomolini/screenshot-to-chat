@@ -187,10 +187,18 @@ if (Test-Path $LegacyFile) {
 }
 
 # ── Patch tui.json ───────────────────────────────────────────────────────────
+# The config dir exists (we preflight-checked it) but tui.json itself
+# may be missing on a fresh OpenCode install - the file is initialized
+# lazily on first use. Bootstrap an empty plugin array so the rest of
+# the patching flow can add the entry normally.
 if (-not (Test-Path $TuiJsonPath)) {
-    Write-Warning "tui.json not found at $TuiJsonPath. Add the plugin path to your config manually:"
-    Write-Warning "  $TargetEntry"
-    exit 0
+    if ($DryRun) {
+        Write-Host "[dry-run] Would create tui.json at $TuiJsonPath (didn't exist)"
+    } else {
+        $bootstrap = [PSCustomObject]@{ plugin = @() }
+        $bootstrap | ConvertTo-Json | Set-Content -Path $TuiJsonPath -Encoding UTF8
+        Write-Host "Created tui.json (it didn't exist)" -ForegroundColor DarkGray
+    }
 }
 
 # Backup before mutating
