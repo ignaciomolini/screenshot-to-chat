@@ -236,38 +236,42 @@ if ($null -eq $tuiConfig.plugin) {
     $tuiConfig.plugin = @($tuiConfig.plugin)
 }
 
-# Remove any legacy single-file entry pointing to the old location
+# Track whether we need to mutate the file. Previously, the legacy-removal
+# branch modified $tuiConfig in memory but only wrote the file in the
+# "new path not present" branch — so a tui.json containing BOTH the legacy
+# and the new entry would report "Removed legacy entry" while leaving the
+# file unchanged on disk. Compute all changes first, then write once.
+$removedLegacy = $false
 $legacyEntries = $tuiConfig.plugin | Where-Object { $_ -eq $LegacyFile }
 if ($legacyEntries) {
     $tuiConfig.plugin = @($tuiConfig.plugin | Where-Object { $_ -ne $LegacyFile })
-    if (-not $DryRun) {
-        Write-Host "Removed legacy entry from tui.json: $LegacyFile" -ForegroundColor DarkGray
-    }
+    $removedLegacy = $true
 }
 
-# Check if new path already present
 $alreadyInstalled = $tuiConfig.plugin | Where-Object { $_ -eq $TargetEntry }
-
-if ($alreadyInstalled) {
-    Write-Host "Plugin already in tui.json plugin array. No change." -ForegroundColor DarkGray
-} else {
+$needsAdd = -not $alreadyInstalled
+if ($needsAdd) {
     $tuiConfig.plugin = @($tuiConfig.plugin) + @($TargetEntry)
+}
 
-    if ($DryRun) {
-        Write-Host "[dry-run] Would add '$TargetEntry' to tui.json plugin array"
-    } else {
-        # Atomic write: render to UTF-8 no-BOM, write to a sibling temp file,
-        # then `Move-Item -Force` to swap. Set-Content truncates in place and
-        # uses the system default encoding (Windows-1252 / UTF-16 LE) on
-        # PS 5.1, which can corrupt UTF-8 tui.json. The Move-Item swap is
-        # atomic on the same filesystem, so a kill mid-write leaves the
-        # previous tui.json intact.
-        $json = $tuiConfig | ConvertTo-Json -Depth 10
-        $tmpJson = "$TuiJsonPath.new"
-        [System.IO.File]::WriteAllText($tmpJson, $json, [System.Text.UTF8Encoding]::new($false))
-        Move-Item -Force -LiteralPath $tmpJson -Destination $TuiJsonPath
-        Write-Host "Added '$TargetEntry' to tui.json plugin array" -ForegroundColor Green
-    }
+if (-not $removedLegacy -and -not $needsAdd) {
+    Write-Host "Plugin already in tui.json plugin array. No change." -ForegroundColor DarkGray
+} elseif ($DryRun) {
+    if ($removedLegacy) { Write-Host "[dry-run] Would remove legacy entry from tui.json: $LegacyFile" }
+    if ($needsAdd) { Write-Host "[dry-run] Would add '$TargetEntry' to tui.json plugin array" }
+} else {
+    # Atomic write: render to UTF-8 no-BOM, write to a sibling temp file,
+    # then `Move-Item -Force` to swap. Set-Content truncates in place and
+    # uses the system default encoding (Windows-1252 / UTF-16 LE) on
+    # PS 5.1, which can corrupt UTF-8 tui.json. The Move-Item swap is
+    # atomic on the same filesystem, so a kill mid-write leaves the
+    # previous tui.json intact.
+    $json = $tuiConfig | ConvertTo-Json -Depth 10
+    $tmpJson = "$TuiJsonPath.new"
+    [System.IO.File]::WriteAllText($tmpJson, $json, [System.Text.UTF8Encoding]::new($false))
+    Move-Item -Force -LiteralPath $tmpJson -Destination $TuiJsonPath
+    if ($removedLegacy) { Write-Host "Removed legacy entry from tui.json: $LegacyFile" -ForegroundColor DarkGray }
+    if ($needsAdd) { Write-Host "Added '$TargetEntry' to tui.json plugin array" -ForegroundColor Green }
 }
 
 Write-Host ""
