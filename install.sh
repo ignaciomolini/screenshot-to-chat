@@ -120,9 +120,10 @@ if [ -z "$SOURCE_DIR" ]; then
     # Sanity-check: a 200 response with an HTML error page (e.g. during
     # GitHub outages or proxy hijack) would otherwise pass the `-f $src`
     # preflight below. Catches the worst case cheaply: TS/TSX files never
-    # start with <!DOCTYPE or <html.
-    if [ "$DRY_RUN" = false ] && [ -f "$SOURCE_ENTRY" ]; then
-        first_bytes=$(head -c 100 "$SOURCE_ENTRY" | tr -d '[:space:]')
+    # start with <!DOCTYPE or <html. Uses $TMP_DIR directly because
+    # $SOURCE_ENTRY is only defined after this block.
+    if [ "$DRY_RUN" = false ] && [ -f "$TMP_DIR/screenshot-to-chat.tsx" ]; then
+        first_bytes=$(head -c 100 "$TMP_DIR/screenshot-to-chat.tsx" | tr -d '[:space:]')
         case "$first_bytes" in
             *\<\!DOCTYPE*|*\<html*)
                 echo -e "\033[31mError: download returned HTML, not source. Aborting.\033[0m" >&2
