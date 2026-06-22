@@ -37,6 +37,19 @@ curl -fsSL https://raw.githubusercontent.com/ignaciomolini/screenshot-to-chat/ma
 
 Requires `jq` on macOS / Linux (`brew install jq` / `sudo apt install jq`).
 
+**Linux users** also need a screen capture tool and ImageMagick for resize (Windows and macOS have these built in). One-shot install for common setups:
+
+```bash
+# Ubuntu / Debian + GNOME
+sudo apt install gnome-screenshot imagemagick
+# Ubuntu / Debian + KDE
+sudo apt install spectacle imagemagick
+# Ubuntu / Debian + wlroots (Sway / Hyprland / Niri)
+sudo apt install slurp grim imagemagick
+```
+
+See [Linux Dependencies](#linux-dependencies) for other distros and the full X11 / Wayland chain.
+
 Restart OpenCode and you're done. The keybind is `Ctrl+S`.
 
 ### Quick install (from a local clone, Windows)
