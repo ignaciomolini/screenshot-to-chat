@@ -15,18 +15,41 @@
 // ── Constants ────────────────────────────────────────────────────────────────
 
 /**
- * Windows snipping tool executable.
- *
- * Uses the absolute path to the legacy SnippingTool.exe in
- * C:\Windows\System32 rather than relying on the bare "SnippingTool.exe"
- * being in $PATH. The legacy binary still ships with every Windows build
- * (7+), but on Windows 11 Microsoft is pushing the new UWP/MSIX Snipping
- * Tool app and the legacy may not be in the user PATH by default. The
- * absolute path avoids "Executable not found in $PATH" errors on W11.
- *
- * Tested on Windows 10 and 11.
+ * PowerShell script that triggers the system-wide region-select capture via
+ * `Win+Shift+S`. Works on every Windows build (10/11/Server) regardless of
+ * whether the legacy SnippingTool.exe is in System32 or only the UWP
+ * Microsoft.ScreenSketch app is installed — the Win+Shift+S shortcut is
+ * handled by the OS itself and produces the same clipboard image either
+ * way. The script simulates the keystroke with P/Invoke to user32.dll's
+ * keybd_event and exits immediately (~100ms); the actual selection is done
+ * by the user in the OS-provided region selector.
  */
-export const SNIPPING_TOOL = "C:\\Windows\\System32\\SnippingTool.exe";
+const SCREEN_CAPTURE_PS_SCRIPT = `
+Add-Type -MemberDefinition @"
+[DllImport("user32.dll", SetLastError = true)]
+public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, IntPtr dwExtraInfo);
+"@ -Name "Win32User32" -Namespace "Native" -PassThru | Out-Null
+
+$VK_LWIN = 0x5B
+$VK_LSHIFT = 0xA0
+$VK_S = 0x53
+$KEYEVENTF_KEYUP = 0x0002
+
+# Key down: Win+Shift+S
+[Native.Win32User32]::keybd_event($VK_LWIN, 0, 0, [IntPtr]::Zero)
+[Native.Win32User32]::keybd_event($VK_LSHIFT, 0, 0, [IntPtr]::Zero)
+[Native.Win32User32]::keybd_event($VK_S, 0, 0, [IntPtr]::Zero)
+
+# Brief delay so the OS registers the combo and opens the selector
+Start-Sleep -Milliseconds 150
+
+# Key up
+[Native.Win32User32]::keybd_event($VK_S, 0, $KEYEVENTF_KEYUP, [IntPtr]::Zero)
+[Native.Win32User32]::keybd_event($VK_LSHIFT, 0, $KEYEVENTF_KEYUP, [IntPtr]::Zero)
+[Native.Win32User32]::keybd_event($VK_LWIN, 0, $KEYEVENTF_KEYUP, [IntPtr]::Zero)
+
+exit 0
+`.trim();
 
 /** Resize target longest edge (px) — matches dispatcher MAX_DIMENSION. */
 const MAX_DIMENSION = 1568;
@@ -101,13 +124,15 @@ const sleep = (ms: number): Promise<void> =>
  * Flow:
  *   1. Clear the clipboard (best-effort) so a stale image from a previous
  *      capture cannot leak into a new attempt.
- *   2. Spawn SnippingTool. It exits 0 on both capture AND Escape — the OS
- *      does not treat Escape as an error — so we cannot rely on exit code
- *      to distinguish them.
- *   3. After the tool exits, do a few quick read attempts (300ms total) to
- *      give the OS a moment to write the captured image to the clipboard.
+ *   2. Spawn a PowerShell process that synthesises `Win+Shift+S` via
+ *      keybd_event. The OS opens the region selector; the user selects.
+ *      The script exits ~150ms after the keystroke — we cannot use exit
+ *      code to distinguish capture from cancel, so:
+ *   3. After the script exits, do a few quick read attempts (~3s total) to
+ *      give the user time to select a region.
  *      - Image present → user captured something, return ok.
- *      - Image still absent → user pressed Escape, return user_cancelled.
+ *      - Image still absent → user pressed Escape (or no selection), return
+ *        user_cancelled.
  */
 export async function spawnSnipping(): Promise<
   | { ok: true }
@@ -123,10 +148,10 @@ export async function spawnSnipping(): Promise<
 
   let proc: ReturnType<typeof Bun.spawn>;
   try {
-    proc = Bun.spawn([SNIPPING_TOOL, "/clip"], {
-      stderr: "pipe",
-      stdout: "pipe",
-    });
+    proc = Bun.spawn(
+      ["powershell", "-NoProfile", "-NonInteractive", "-Command", SCREEN_CAPTURE_PS_SCRIPT],
+      { stderr: "pipe", stdout: "pipe" },
+    );
   } catch (e) {
     return {
       ok: false,
