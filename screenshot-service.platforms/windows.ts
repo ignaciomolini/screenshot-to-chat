@@ -164,13 +164,20 @@ export async function spawnSnipping(): Promise<
     return { ok: false, error: { type: "tool_unavailable" } };
   }
 
-  // Quick checks: up to 3 attempts × 100ms = ~300ms. If a real capture is
-  // happening, the image will be on the clipboard well within this window
-  // (SnippingTool writes synchronously before exiting on Windows).
-  for (let i = 0; i < 3; i++) {
+  // Poll the clipboard for up to 30s. The Win+Shift+S script exits
+  // immediately after firing the keystroke (~150ms), and the OS then
+  // shows the region selector. The user can take several seconds to
+  // see the selector, move the mouse, and select a region — the
+  // previous 3-iteration × 100ms loop (~300ms) was far too short and
+  // caused "screenshot cancelled" false positives on the first call.
+  // We poll every 500ms. If the user pressed Escape (or never
+  // selected), the clipboard stays empty and we time out as cancelled.
+  const pollStart = Date.now();
+  const pollTimeoutMs = 30_000;
+  while (Date.now() - pollStart < pollTimeoutMs) {
     const base64 = await readCapturedImage();
     if (base64) return { ok: true };
-    await sleep(100);
+    await sleep(500);
   }
 
   return { ok: false, error: { type: "user_cancelled" } };

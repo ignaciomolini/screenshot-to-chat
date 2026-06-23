@@ -72,7 +72,11 @@ describe("windows", () => {
   });
 
   itWin("spawnSnipping returns user_cancelled when no image after SnippingTool exit", async () => {
-    // Queue: [1] clear, [2] SnippingTool, [3..5] three empty read attempts
+    // Queue: [1] clear, [2] SnippingTool, [3..N] empty read attempts until poll times out.
+    // The poll now runs for ~30s (was ~300ms); give the test a 35s timeout so the
+    // full poll window can elapse. After the explicit mocks, the makeSequenceMock
+    // default (empty stdout, exit 0) keeps returning "no image" until Date.now()
+    // advances past the timeout.
     (Bun as any).spawn = makeSequenceMock([
       { exitCode: 0 },                              // clearClipboard
       { exitCode: 0 },                              // SnippingTool exits 0
@@ -83,7 +87,7 @@ describe("windows", () => {
 
     const result = await spawnSnipping();
     expect(result).toEqual({ ok: false, error: { type: "user_cancelled" } });
-  });
+  }, 35_000);
 
   itWin("spawnSnipping returns tool_unavailable on non-zero exit", async () => {
     (Bun as any).spawn = makeSequenceMock([
