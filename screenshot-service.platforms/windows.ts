@@ -14,8 +14,19 @@
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-/** Windows snipping tool executable. */
-export const SNIPPING_TOOL = "SnippingTool.exe";
+/**
+ * Windows snipping tool executable.
+ *
+ * Uses the absolute path to the legacy SnippingTool.exe in
+ * C:\Windows\System32 rather than relying on the bare "SnippingTool.exe"
+ * being in $PATH. The legacy binary still ships with every Windows build
+ * (7+), but on Windows 11 Microsoft is pushing the new UWP/MSIX Snipping
+ * Tool app and the legacy may not be in the user PATH by default. The
+ * absolute path avoids "Executable not found in $PATH" errors on W11.
+ *
+ * Tested on Windows 10 and 11.
+ */
+export const SNIPPING_TOOL = "C:\\Windows\\System32\\SnippingTool.exe";
 
 /** Resize target longest edge (px) — matches dispatcher MAX_DIMENSION. */
 const MAX_DIMENSION = 1568;
