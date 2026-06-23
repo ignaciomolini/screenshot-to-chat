@@ -37,10 +37,20 @@ if ([string]::IsNullOrEmpty($env:TEMP)) {
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 $RawBaseUrl = "https://raw.githubusercontent.com/ignaciomolini/screenshot-to-chat/main"
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-# Normalise: $ScriptDir can be $null, "", or a path depending on the host PS
-# build and how the script was invoked. Coerce to "" so the mode-detection
+# NOTE: $MyInvocation.MyCommand.Path is $null when the script is run via
+# `irm ... | iex` (no physical file). Split-Path throws a parameter-binding
+# validation error ("Cannot bind argument to parameter 'Path' because it is
+# null") if we pass it $null directly, so guard the call rather than relying
+# on a later normalisation step (the error is terminating and aborts the
+# script before that step ever runs). Coerce to "" so the mode-detection
 # checks below have a single canonical empty-state to compare against.
+$ScriptDir = ""
+$commandPath = $MyInvocation.MyCommand.Path
+if ($commandPath) {
+    try { $ScriptDir = Split-Path -Parent $commandPath } catch { $ScriptDir = "" }
+}
+# Normalise: $ScriptDir can be $null or "" depending on the host PS build
+# and how the script was invoked.
 if ($null -eq $ScriptDir) { $ScriptDir = "" }
 
 # ── Mode detection (BEFORE computing source paths) ───────────────────────────
