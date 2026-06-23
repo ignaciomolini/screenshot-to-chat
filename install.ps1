@@ -25,13 +25,34 @@ $ProgressPreference = 'SilentlyContinue'
 # ── Paths ────────────────────────────────────────────────────────────────────
 $RawBaseUrl = "https://raw.githubusercontent.com/ignaciomolini/screenshot-to-chat/main"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$SourceEntry = Join-Path $ScriptDir "screenshot-to-chat.tsx"
-$SourceService = Join-Path $ScriptDir "screenshot-service.ts"
-$SourcePlatformsDir = Join-Path $ScriptDir "screenshot-service.platforms"
-$SourcePlatformsWindows = Join-Path $SourcePlatformsDir "windows.ts"
-$SourcePlatformsMacos = Join-Path $SourcePlatformsDir "macos.ts"
-$SourcePlatformsLinux = Join-Path $SourcePlatformsDir "linux.ts"
 
+# ── Mode detection (BEFORE computing source paths) ───────────────────────────
+# When run via `irm ... | iex`, $MyInvocation.MyCommand.Path is empty so
+# $ScriptDir is $null on some PS 5.1 builds. The naive approach of computing
+# `Join-Path $ScriptDir ...` first and then detecting mode caused "Path is
+# null" errors at the first Join-Path before mode detection could fire.
+# Detect mode first, then compute source paths only when actually needed.
+$InOneLinerMode = $false
+if ([string]::IsNullOrEmpty($ScriptDir) -or -not (Test-Path -LiteralPath $ScriptDir -PathType Container)) {
+    $InOneLinerMode = $true
+} elseif (-not (Test-Path -LiteralPath (Join-Path $ScriptDir "screenshot-to-chat.tsx"))) {
+    # The else branch only evaluates the Join-Path if $ScriptDir is a
+    # valid container (the previous check ensured this).
+    $InOneLinerMode = $true
+}
+
+# Source paths: only computed in local mode. In one-liner mode they are
+# re-pointed to the temp dir inside the download block below.
+if (-not $InOneLinerMode) {
+    $SourceEntry = Join-Path $ScriptDir "screenshot-to-chat.tsx"
+    $SourceService = Join-Path $ScriptDir "screenshot-service.ts"
+    $SourcePlatformsDir = Join-Path $ScriptDir "screenshot-service.platforms"
+    $SourcePlatformsWindows = Join-Path $SourcePlatformsDir "windows.ts"
+    $SourcePlatformsMacos = Join-Path $SourcePlatformsDir "macos.ts"
+    $SourcePlatformsLinux = Join-Path $SourcePlatformsDir "linux.ts"
+}
+
+# Target paths (always computed; they only depend on $env:USERPROFILE).
 $UserConfigDir = Join-Path $env:USERPROFILE ".config\opencode"
 $PluginsDir = Join-Path $UserConfigDir "tui-plugins"
 $PluginDir = Join-Path $PluginsDir "screenshot-to-chat"
@@ -50,23 +71,8 @@ if (-not (Test-Path $UserConfigDir)) {
     exit 1
 }
 
-# ── Mode detection & one-liner download ──────────────────────────────────────
-# If the entry source file is not at the script's location (e.g. the script is
-# run from a temp dir via `irm ... | iex`), enter one-liner mode: download the
-# plugin files to a temp dir and install from there.
-#
-# Detection: when run via `irm ... | iex`, $MyInvocation.MyCommand.Path is
-# empty, so $ScriptDir is empty, and `Test-Path $SourceEntry` would resolve
-# against the CWD — if CWD happens to contain a screenshot-to-chat.tsx the
-# script would silently enter local mode and copy the wrong file. We detect
-# the iex context explicitly and gate the download block on that flag.
+# ── One-liner download + install ─────────────────────────────────────────────
 $TmpDir = $null
-$InOneLinerMode = $false
-if ([string]::IsNullOrEmpty($ScriptDir) -or -not (Test-Path -LiteralPath $ScriptDir -PathType Container)) {
-    $InOneLinerMode = $true
-} elseif (-not (Test-Path -LiteralPath $SourceEntry)) {
-    $InOneLinerMode = $true
-}
 try {
     if ($InOneLinerMode) {
         # One-liner mode
