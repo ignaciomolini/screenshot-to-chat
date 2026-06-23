@@ -22,6 +22,19 @@ $ProgressPreference = 'SilentlyContinue'
 # raw.githubusercontent.com.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+# ── Env-var fallback (defensive against PS 5.1 hosts where env vars are
+# empty/null when the script runs via `irm ... | iex`) ───────────────────
+# USERPROFILE and TEMP are normally always set in Windows, but in some
+# PS 5.1 builds the one-liner `iex` context can present them as $null or
+# "". Falling back to .NET's Environment.GetFolderPath / Path.GetTempPath
+# gives us a reliable value regardless of how the script was invoked.
+if ([string]::IsNullOrEmpty($env:USERPROFILE)) {
+    $env:USERPROFILE = [Environment]::GetFolderPath("UserProfile")
+}
+if ([string]::IsNullOrEmpty($env:TEMP)) {
+    $env:TEMP = [System.IO.Path]::GetTempPath()
+}
+
 # ── Paths ────────────────────────────────────────────────────────────────────
 $RawBaseUrl = "https://raw.githubusercontent.com/ignaciomolini/screenshot-to-chat/main"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
