@@ -25,20 +25,37 @@ $ProgressPreference = 'SilentlyContinue'
 # ── Paths ────────────────────────────────────────────────────────────────────
 $RawBaseUrl = "https://raw.githubusercontent.com/ignaciomolini/screenshot-to-chat/main"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+# Normalise: $ScriptDir can be $null, "", or a path depending on the host PS
+# build and how the script was invoked. Coerce to "" so the mode-detection
+# checks below have a single canonical empty-state to compare against.
+if ($null -eq $ScriptDir) { $ScriptDir = "" }
 
 # ── Mode detection (BEFORE computing source paths) ───────────────────────────
 # When run via `irm ... | iex`, $MyInvocation.MyCommand.Path is empty so
-# $ScriptDir is $null on some PS 5.1 builds. The naive approach of computing
-# `Join-Path $ScriptDir ...` first and then detecting mode caused "Path is
-# null" errors at the first Join-Path before mode detection could fire.
-# Detect mode first, then compute source paths only when actually needed.
+# $ScriptDir ends up as "". The previous version of this code used a single
+# `if (... -or -not (Test-Path -LiteralPath $ScriptDir -PathType Container))`
+# check that depended on PowerShell's `-or` short-circuit semantics — which
+# some PS 5.1 builds do not honour the way we need, causing Test-Path to be
+# called with $ScriptDir="" and throwing "argument cannot be bound to
+# parameter 'Path' because it is null". This version uses explicit
+# sequential checks with try/catch around every Test-Path, so no cmdlet
+# ever receives a null/empty Path.
 $InOneLinerMode = $false
-if ([string]::IsNullOrEmpty($ScriptDir) -or -not (Test-Path -LiteralPath $ScriptDir -PathType Container)) {
+if ($ScriptDir -eq "") {
     $InOneLinerMode = $true
-} elseif (-not (Test-Path -LiteralPath (Join-Path $ScriptDir "screenshot-to-chat.tsx"))) {
-    # The else branch only evaluates the Join-Path if $ScriptDir is a
-    # valid container (the previous check ensured this).
-    $InOneLinerMode = $true
+} else {
+    $isContainer = $false
+    try { $isContainer = [bool](Test-Path -LiteralPath $ScriptDir -PathType Container) } catch { $isContainer = $false }
+    if (-not $isContainer) {
+        $InOneLinerMode = $true
+    } else {
+        $sourceEntryCandidate = Join-Path $ScriptDir "screenshot-to-chat.tsx"
+        $hasSource = $false
+        try { $hasSource = [bool](Test-Path -LiteralPath $sourceEntryCandidate) } catch { $hasSource = $false }
+        if (-not $hasSource) {
+            $InOneLinerMode = $true
+        }
+    }
 }
 
 # Source paths: only computed in local mode. In one-liner mode they are
