@@ -1,6 +1,6 @@
 {
   "name": "screenshot-to-chat",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "OpenCode TUI plugin to capture screenshots and attach them to the chat prompt",
   "private": true,
   "type": "module",
