@@ -10,9 +10,32 @@
  * directly so the module has no dependency on `screenshot-service.ts`
  * (which would create a circular import). The dispatcher still exports
  * the same constants for external consumers.
+ *
+ * Two capture paths are supported and selected at module-load time:
+ *   - Legacy: `C:\Windows\System32\SnippingTool.exe /clip` — the classic
+ *     Windows snipping tool. Exits 0 on both capture and Escape; the
+ *     plugin distinguishes the two via clipboard polling (short window
+ *     because the tool writes synchronously). Preferred on Windows 10
+ *     and on Windows 11 builds that still ship the legacy binary —
+ *     gives a familiar UI and no OS notification overlay.
+ *   - Native: synthesises `Win+Shift+S` via keybd_event so the OS's
+ *     own region selector appears (the modern experience, available on
+ *     every Windows 10/11/Server build, including W11 24H2 where the
+ *     legacy binary was removed from System32). Polls the clipboard
+ *     for up to 10s.
  */
 
+import { existsSync } from "node:fs";
+
 // ── Constants ────────────────────────────────────────────────────────────────
+
+/** Path to the legacy SnippingTool.exe binary (Windows 10 and some W11 builds). */
+const LEGACY_SNIPPING_TOOL = "C:\\Windows\\System32\\SnippingTool.exe";
+
+/** Whether the legacy snipping tool is available on this machine. Decided once at
+ *  module load. On W11 24H2 (and any build where the legacy was removed) this
+ *  is false and we use the native Win+Shift+S path instead. */
+const USE_LEGACY = existsSync(LEGACY_SNIPPING_TOOL);
 
 /**
  * PowerShell script that triggers the system-wide region-select capture via
@@ -119,20 +142,32 @@ const sleep = (ms: number): Promise<void> =>
 // ── Capture ──────────────────────────────────────────────────────────────────
 
 /**
- * Spawn SnippingTool.exe in /clip mode and disambiguate capture from cancel.
+ * Spawn the snipping tool and disambiguate capture from cancel.
  *
- * Flow:
- *   1. Clear the clipboard (best-effort) so a stale image from a previous
- *      capture cannot leak into a new attempt.
+ * Picks the legacy or native path at module load based on whether
+ * `C:\Windows\System32\SnippingTool.exe` exists (see `USE_LEGACY`).
+ *
+ * Legacy path (when USE_LEGACY = true):
+ *   1. Clear the clipboard (best-effort).
+ *   2. Spawn SnippingTool.exe in /clip mode. It exits 0 on both capture
+ *      AND Escape — the OS does not treat Escape as an error — so we
+ *      cannot use exit code to distinguish them.
+ *   3. After the tool exits, do a few quick read attempts (~300ms total)
+ *      to give the OS a moment to write the captured image to the
+ *      clipboard.
+ *      - Image present → user captured something, return ok.
+ *      - Image still absent → user pressed Escape, return user_cancelled.
+ *
+ * Native path (when USE_LEGACY = false, e.g. W11 24H2 with no legacy):
+ *   1. Clear the clipboard (best-effort).
  *   2. Spawn a PowerShell process that synthesises `Win+Shift+S` via
  *      keybd_event. The OS opens the region selector; the user selects.
  *      The script exits ~150ms after the keystroke — we cannot use exit
  *      code to distinguish capture from cancel, so:
- *   3. After the script exits, do a few quick read attempts (~3s total) to
- *      give the user time to select a region.
- *      - Image present → user captured something, return ok.
- *      - Image still absent → user pressed Escape (or no selection), return
- *        user_cancelled.
+ *   3. Poll the clipboard for up to 10s. Image present → ok; empty after
+ *      10s → user_cancelled. (10s is shorter than the 30s we used before
+ *      because the user reported the long wait after Escape was painful;
+ *      10s is still plenty for a normal selection.)
  */
 export async function spawnSnipping(): Promise<
   | { ok: true }
@@ -146,6 +181,65 @@ export async function spawnSnipping(): Promise<
 > {
   await clearClipboard();
 
+  if (USE_LEGACY) {
+    return spawnSnippingLegacy();
+  } else {
+    return spawnSnippingNative();
+  }
+}
+
+/** Legacy capture path: spawn SnippingTool.exe /clip directly. */
+async function spawnSnippingLegacy(): Promise<
+  | { ok: true }
+  | {
+      ok: false;
+      error:
+        | { type: "user_cancelled" }
+        | { type: "tool_unavailable" }
+        | { type: "spawn_failed"; message: string };
+    }
+> {
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn([LEGACY_SNIPPING_TOOL, "/clip"], {
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error: { type: "spawn_failed", message: (e as Error).message },
+    };
+  }
+
+  await proc.exited;
+  if (proc.exitCode !== 0) {
+    return { ok: false, error: { type: "tool_unavailable" } };
+  }
+
+  // Legacy tool writes synchronously before exiting. A few short polls
+  // (~300ms total) is enough to detect capture vs cancel.
+  for (let i = 0; i < 3; i++) {
+    const base64 = await readCapturedImage();
+    if (base64) return { ok: true };
+    await sleep(100);
+  }
+
+  return { ok: false, error: { type: "user_cancelled" } };
+}
+
+/** Native capture path: synthesise Win+Shift+S via keybd_event, then poll
+ *  the clipboard for up to 10s for the captured image. */
+async function spawnSnippingNative(): Promise<
+  | { ok: true }
+  | {
+      ok: false;
+      error:
+        | { type: "user_cancelled" }
+        | { type: "tool_unavailable" }
+        | { type: "spawn_failed"; message: string };
+    }
+> {
   let proc: ReturnType<typeof Bun.spawn>;
   try {
     proc = Bun.spawn(
@@ -164,16 +258,8 @@ export async function spawnSnipping(): Promise<
     return { ok: false, error: { type: "tool_unavailable" } };
   }
 
-  // Poll the clipboard for up to 30s. The Win+Shift+S script exits
-  // immediately after firing the keystroke (~150ms), and the OS then
-  // shows the region selector. The user can take several seconds to
-  // see the selector, move the mouse, and select a region — the
-  // previous 3-iteration × 100ms loop (~300ms) was far too short and
-  // caused "screenshot cancelled" false positives on the first call.
-  // We poll every 500ms. If the user pressed Escape (or never
-  // selected), the clipboard stays empty and we time out as cancelled.
   const pollStart = Date.now();
-  const pollTimeoutMs = 30_000;
+  const pollTimeoutMs = 10_000;
   while (Date.now() - pollStart < pollTimeoutMs) {
     const base64 = await readCapturedImage();
     if (base64) return { ok: true };
